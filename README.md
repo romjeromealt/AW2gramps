@@ -10,3 +10,6 @@ You may also want to install `wikipedia` python module.
 Under linux:
 
 ```$ pip3 install wikipedia```
+
+or the more recent one: `wikipedia-api` from:  
+https://github.com/martin-majlis/Wikipedia-API/
