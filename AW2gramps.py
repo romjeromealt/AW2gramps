@@ -45,7 +45,7 @@ def get_wikipedia_summary(title, use_wikipedia):
         wikipedia.set_lang("fr")
         return wikipedia.summary(title, sentences=3, auto_suggest=False)
     except ImportError:
-        print("Le module 'wikipedia' n'est pas installé. Utilisez `pip install wikipedia` pour l'activer.")
+        print("Le module 'wikipedia' n'est pas installé. Utilisez `pip3 install wikipedia` pour l'activer.")
         return None
     except wikipedia.exceptions.PageError:
         return None
@@ -89,7 +89,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
     # Dictionnaire pour stocker les handles des notes
     note_handles = {}
 
-    # Traitement des notes
+    # Traitement des notes, en premier
     for i, row in enumerate(data, 1):
         print("\rTraitement des notes : {}/{} ({}%)".format(i, total_rows, int(i/total_rows*100)), end="")
 
@@ -114,7 +114,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
 
     print()  # Saut de ligne après la boucle des notes
 
-    # Traitement des lieux
+    # Ajouter les lieux et référencer les notes
     for i, row in enumerate(data, 1):
         print("\rTraitement des lieux : {}/{} ({}%)".format(i, total_rows, int(i/total_rows*100)), end="")
 
@@ -128,15 +128,18 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
         ptitle = ET.SubElement(place, 'ptitle')
         ptitle.text = row.get('Titre', 'Inconnu')
 
+        # Nom du lieu
         pname = ET.SubElement(place, 'pname')
         pname.set('value', row.get('Titre', 'Inconnu'))
 
+        # Coordonnées
         lat, lon = parse_coords(row.get('Coordonnées', ''))
         if lat and lon:
             coord = ET.SubElement(place, 'coord')
             coord.set('lat', "{:.6f}".format(lat))
             coord.set('long', "{:.6f}".format(lon))
 
+        # Référence à la note si elle existe
         if row['Titre'] in note_handles:
             noteref = ET.SubElement(place, 'noteref')
             noteref.set('hlink', note_handles[row['Titre']])
@@ -145,12 +148,18 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
 
     print()  # Saut de ligne après la boucle des lieux
 
+    # Convertir en chaîne XML
     xml_str = ET.tostring(database, encoding='utf-8').decode('utf-8')
+
+    # Ajouter la déclaration DOCTYPE pour Gramps 5.2
     doctype_declaration = '''<!DOCTYPE database PUBLIC "-//Gramps//DTD Gramps XML 1.7.1//EN"
 "http://gramps-project.org/xml/1.7.1/grampsxml.dtd">'''
+
+    # Formater le XML avec minidom
     xml_str = "{}\n{}".format(doctype_declaration, xml_str)
     dom = parseString(xml_str)
 
+    # Écrire le fichier
     with open(output_xml_file_path, 'w', encoding='utf-8') as f:
         dom.writexml(f, indent='  ', addindent='  ', newl='\n', encoding='utf-8')
 
