@@ -11,7 +11,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Convertit un fichier CSV en format Gramps XML.")
     parser.add_argument("input_csv", help="Chemin vers le fichier CSV d'entrée.")
     parser.add_argument("output_xml", help="Chemin vers le fichier XML de sortie.")
-    parser.add_argument("--wikipedia", "-w", action="store_true", help="Activer la recherche Wikipedia pour enrichir les descriptions.")
+    parser.add_argument("--wikipedia", "-w", action="store_true", help="Activer la recherche Wikipedia.")
     return parser.parse_args()
 
 def dms_to_decimal(dms):
@@ -36,6 +36,43 @@ def parse_coords(coords_str):
         return lat, lon
     return None, None
 
+def extract_refs(text):
+    """Extrait les balises <ref>...</ref> d'un texte et retourne une liste de références."""
+    ref_pattern = re.compile(r'<ref>(.*?)</ref>', re.DOTALL)
+    refs = ref_pattern.findall(text)
+    return refs
+
+def extract_sources_from_ref(ref):
+    """Extrait les sources des modèles {{Source|...}} dans une référence."""
+    source_pattern = re.compile(r'\{\{Source\|(.*?)\}\}')
+    sources = source_pattern.findall(ref)
+    return sources
+
+def parse_ref(ref):
+    """Parse une référence pour extraire les sources et les métadonnées."""
+    url = None
+    meta = {}
+    sources = extract_sources_from_ref(ref)
+
+    if ref.strip().startswith("http"):
+        parts = ref.split()
+        url = parts[0]
+        meta["consulté"] = " ".join(parts[1:]) if len(parts) > 1 else ""
+
+    return url, meta, sources
+
+def extract_gallery(text):
+    """Extrait les images d'une balise <gallery> et retourne une liste de tuples (fichier, description)."""
+    gallery_pattern = re.compile(r'<gallery>(.*?)</gallery>', re.DOTALL)
+    match = gallery_pattern.search(text)
+    if not match:
+        return []
+
+    gallery_content = match.group(1)
+    image_pattern = re.compile(r'Fichier:([^\|]+)\|([^\n]+)')
+    images = image_pattern.findall(gallery_content)
+    return images
+
 def get_wikipedia_summary(title, use_wikipedia):
     """Récupère un résumé Wikipedia si l'option est activée."""
     if not use_wikipedia:
@@ -59,7 +96,7 @@ def get_wikipedia_summary(title, use_wikipedia):
 
 def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
     with open(csv_file_path, mode='r', encoding='utf-8') as csv_file:
-        csv_reader = csv.DictReader(csv_file)
+        csv_reader = csv.DictReader(csv_file, delimiter=',', quotechar='"')
         data = [row for row in csv_reader]
 
     total_rows = len(data)
@@ -79,8 +116,6 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
 
     # Sections principales (comme dans example.gramps)
     objects = ET.SubElement(database, 'objects')
-    places = ET.SubElement(objects, 'places')
-    notes = ET.SubElement(objects, 'notes')
 
     # Compteurs pour les handles (format Gramps : _xxxxxxxx)
     place_handle = 100000000
@@ -88,6 +123,10 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
 
     # Dictionnaire pour stocker les handles des notes
     note_handles = {}
+    source_handles = {}
+    next_source_handle = 500000000
+    media_handles = {}
+    next_media_handle = 600000000
 
     # Traitement des notes, en premier
     for i, row in enumerate(data, 1):
@@ -99,9 +138,92 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
         if wiki_summary:
             description = "{}\n\n--- Wikipedia ---\n{}".format(description, wiki_summary)
 
+        # Extraction des références
+        refs = extract_refs(description)
+
+        # Création des objets source pour chaque référence unique
+        for ref in refs:
+            url, meta, sources = parse_ref(ref)
+
+            # Création d'une source pour l'URL si elle existe
+            if url and url not in source_handles:
+                source = ET.SubElement(
+                    objects, 'source',
+                    handle="_{}".format(next_source_handle),
+                    id="S{}".format(next_source_handle),
+                    change=str(int(datetime.now().timestamp()))
+                )
+                stitle = ET.SubElement(source, 'stitle')
+                stitle.text = url
+                if meta.get("consulté"):
+                    spubinfo = ET.SubElement(source, 'spubinfo')
+                    spubinfo.text = meta["consulté"]
+                source_handles[url] = "_{}".format(next_source_handle)
+                next_source_handle += 1
+
+            # Création de sources pour chaque modèle {{Source|...}}
+            for source_model in sources:
+                if source_model not in source_handles:
+                    source = ET.SubElement(
+                        objects, 'source',
+                        handle="_{}".format(next_source_handle),
+                        id="S{}".format(next_source_handle),
+                        change=str(int(datetime.now().timestamp()))
+                    )
+                    stitle = ET.SubElement(source, 'stitle')
+                    stitle.text = source_model
+                    source_handles[source_model] = "_{}".format(next_source_handle)
+                    next_source_handle += 1
+
+        # Remplacement des balises <ref> et {{Source|...}} par des références Gramps
+        for ref in refs:
+            url, meta, sources = parse_ref(ref)
+            ref_replacement = []
+
+            if url and url in source_handles:
+                ref_replacement.append('<sourceref hlink="{}"/>'.format(source_handles[url]))
+
+            for source_model in sources:
+                if source_model in source_handles:
+                    ref_replacement.append('<sourceref hlink="{}"/>'.format(source_handles[source_model]))
+
+            if ref_replacement:
+                description = description.replace('<ref>{}</ref>'.format(ref), " ".join(ref_replacement), 1)
+
+        # Extraction des galeries
+        images = extract_gallery(description)
+
+        # Création des objets média pour chaque image
+        for image_file, image_desc in images:
+            if image_file not in media_handles:
+                media = ET.SubElement(
+                    objects, 'object',
+                    handle="_{}".format(next_media_handle),
+                    id="O{}".format(next_media_handle),
+                    type="Media",
+                    change=str(int(datetime.now().timestamp()))
+                )
+                file = ET.SubElement(media, 'file')
+                file.set('src', image_file)
+                file.set('mime', 'image/jpeg')
+                file.set('description', image_desc)
+
+                media_handles[image_file] = "_{}".format(next_media_handle)
+                next_media_handle += 1
+
+        # Remplacement des balises <gallery> par des références Gramps dans la description
+        if images:
+            media_refs = []
+            for image_file, image_desc in images:
+                if image_file in media_handles:
+                    media_refs.append('<objref hlink="{}"/>'.format(media_handles[image_file]))
+
+            gallery_replacement = "\n".join(media_refs)
+            description = re.sub(r'<gallery>.*?</gallery>', gallery_replacement, description, flags=re.DOTALL)
+
         if description:
             note = ET.SubElement(
-                notes, 'note',
+                objects, 'note',
                 handle="_{}".format(note_handle),
                 change=str(int(datetime.now().timestamp())),
                 id="N{}".format(note_handle),
@@ -109,17 +231,16 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
             )
             text = ET.SubElement(note, 'text')
             text.text = "<b>{}</b><p>{}</p>".format(row['Titre'], description.replace(chr(10), '<br>'))
+
             note_handles[row['Titre']] = "_{}".format(note_handle)
             note_handle += 1
-
-    print()  # Saut de ligne après la boucle des notes
 
     # Ajouter les lieux et référencer les notes
     for i, row in enumerate(data, 1):
         print("\rTraitement des lieux : {}/{} ({}%)".format(i, total_rows, int(i/total_rows*100)), end="")
 
         place = ET.SubElement(
-            places, 'placeobj',
+            objects, 'placeobj',
             handle="_{}".format(place_handle),
             change=str(int(datetime.now().timestamp())),
             id="P{}".format(place_handle),
