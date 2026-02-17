@@ -1,11 +1,21 @@
+# -*- coding: utf-8 -*-
+
 import csv
 import re
+import argparse
 from xml.dom.minidom import parseString
 from xml.etree import ElementTree as ET
 from datetime import datetime
 
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Convertit un fichier CSV en format Gramps XML.")
+    parser.add_argument("input_csv", help="Chemin vers le fichier CSV d'entrée.")
+    parser.add_argument("output_xml", help="Chemin vers le fichier XML de sortie.")
+    parser.add_argument("--wikipedia", "-w", action="store_true", help="Activer la recherche Wikipedia pour enrichir les descriptions.")
+    return parser.parse_args()
+
 def dms_to_decimal(dms):
-    """Convertit les coordonnées DMS (ex. 48° 34' 34.00" N) en décimal."""
+    """Convertit les coordonnées DMS en décimal."""
     match = re.match(r"(\d+)° (\d+)' ([\d\.]+)\" ([NSEW])", dms.strip())
     if match:
         degrees, minutes, seconds, direction = match.groups()
@@ -26,10 +36,34 @@ def parse_coords(coords_str):
         return lat, lon
     return None, None
 
-def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
+def get_wikipedia_summary(title, use_wikipedia):
+    """Récupère un résumé Wikipedia si l'option est activée."""
+    if not use_wikipedia:
+        return None
+    try:
+        import wikipedia
+        wikipedia.set_lang("fr")
+        return wikipedia.summary(title, sentences=3, auto_suggest=False)
+    except ImportError:
+        print("Le module 'wikipedia' n'est pas installé. Utilisez `pip install wikipedia` pour l'activer.")
+        return None
+    except wikipedia.exceptions.PageError:
+        return None
+    except wikipedia.exceptions.DisambiguationError as e:
+        if e.options:
+            return wikipedia.summary(e.options[0], sentences=3, auto_suggest=False)
+        return None
+    except Exception as e:
+        print("Erreur Wikipedia pour {}: {}".format(title, e))
+        return None
+
+def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
     with open(csv_file_path, mode='r', encoding='utf-8') as csv_file:
         csv_reader = csv.DictReader(csv_file)
         data = [row for row in csv_reader]
+
+    total_rows = len(data)
+    print("Conversion de {} entrées...".format(total_rows))
 
     # Créer la structure XML de base pour Gramps 5.2
     database = ET.Element('database', xmlns="http://gramps-project.org/xml/1.7.1/")
@@ -55,66 +89,76 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
     # Dictionnaire pour stocker les handles des notes
     note_handles = {}
 
-    # Ajouter d'abord toutes les notes
-    for row in data:
-        if 'Description' in row and row['Description'].strip():
+    # Traitement des notes
+    for i, row in enumerate(data, 1):
+        print("\rTraitement des notes : {}/{} ({}%)".format(i, total_rows, int(i/total_rows*100)), end="")
+
+        description = row.get('Description', '').strip()
+        wiki_summary = get_wikipedia_summary(row['Titre'], use_wikipedia)
+
+        if wiki_summary:
+            description = "{}\n\n--- Wikipedia ---\n{}".format(description, wiki_summary)
+
+        if description:
             note = ET.SubElement(
                 notes, 'note',
-                handle=f"_{note_handle}",
+                handle="_{}".format(note_handle),
                 change=str(int(datetime.now().timestamp())),
-                id=f"N{note_handle}",
+                id="N{}".format(note_handle),
                 type="Html code"
             )
             text = ET.SubElement(note, 'text')
-            text.text = row['Description'].strip()
-            note_handles[row['Titre']] = f"_{note_handle}"
+            text.text = "<b>{}</b><p>{}</p>".format(row['Titre'], description.replace(chr(10), '<br>'))
+            note_handles[row['Titre']] = "_{}".format(note_handle)
             note_handle += 1
 
-    # Ajouter les lieux et référencer les notes
-    for row in data:
+    print()  # Saut de ligne après la boucle des notes
+
+    # Traitement des lieux
+    for i, row in enumerate(data, 1):
+        print("\rTraitement des lieux : {}/{} ({}%)".format(i, total_rows, int(i/total_rows*100)), end="")
+
         place = ET.SubElement(
             places, 'placeobj',
-            handle=f"_{place_handle}",
+            handle="_{}".format(place_handle),
             change=str(int(datetime.now().timestamp())),
-            id=f"P{place_handle}",
+            id="P{}".format(place_handle),
             type="Place"
         )
         ptitle = ET.SubElement(place, 'ptitle')
         ptitle.text = row.get('Titre', 'Inconnu')
 
-        # Nom du lieu
         pname = ET.SubElement(place, 'pname')
         pname.set('value', row.get('Titre', 'Inconnu'))
 
-        # Coordonnées
         lat, lon = parse_coords(row.get('Coordonnées', ''))
         if lat and lon:
             coord = ET.SubElement(place, 'coord')
-            coord.set('lat', f"{lat:.6f}")
-            coord.set('long', f"{lon:.6f}")
+            coord.set('lat', "{:.6f}".format(lat))
+            coord.set('long', "{:.6f}".format(lon))
 
-        # Référence à la note si elle existe
         if row['Titre'] in note_handles:
             noteref = ET.SubElement(place, 'noteref')
             noteref.set('hlink', note_handles[row['Titre']])
 
         place_handle += 1
 
-    # Convertir en chaîne XML
-    xml_str = ET.tostring(database, encoding='utf-8').decode('utf-8')
+    print()  # Saut de ligne après la boucle des lieux
 
-    # Ajouter la déclaration DOCTYPE pour Gramps 5.2
+    xml_str = ET.tostring(database, encoding='utf-8').decode('utf-8')
     doctype_declaration = '''<!DOCTYPE database PUBLIC "-//Gramps//DTD Gramps XML 1.7.1//EN"
 "http://gramps-project.org/xml/1.7.1/grampsxml.dtd">'''
-    xml_str = f"{doctype_declaration}\n{xml_str}"
-
-    # Formater le XML avec minidom
+    xml_str = "{}\n{}".format(doctype_declaration, xml_str)
     dom = parseString(xml_str)
 
-    # Écrire le fichier
     with open(output_xml_file_path, 'w', encoding='utf-8') as f:
         dom.writexml(f, indent='  ', addindent='  ', newl='\n', encoding='utf-8')
 
-# Exemple d'utilisation
-csv_to_gramps_xml('export.csv', 'output.gramps')
+    print("Conversion terminée avec succès !")
 
+def main():
+    args = parse_arguments()
+    csv_to_gramps_xml(args.input_csv, args.output_xml, args.wikipedia)
+
+if __name__ == "__main__":
+    main()
