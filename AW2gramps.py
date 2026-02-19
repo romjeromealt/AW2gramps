@@ -9,6 +9,7 @@ from datetime import datetime
 import os
 import mimetypes
 import sys
+import dateutil.parser
 
 def parse_arguments():
     """Parse les arguments de la ligne de commande."""
@@ -142,18 +143,15 @@ def get_mime_type(filename):
         return 'application/pdf'
     return 'application/octet-stream'
 
-def is_valid_year(year_str):
-    """Vérifie si une chaîne représente une année valide."""
-    if not year_str:
-        return False
-    year_str = year_str.strip()
-    if not year_str.isdigit():
-        return False
-    year = int(year_str)
-    return 1000 <= year <= 2100
+def parse_date(date_str):
+    """Parse une date en utilisant dateutil.parser pour une meilleure flexibilité."""
+    try:
+        return dateutil.parser.parse(date_str, fuzzy=True)
+    except ValueError:
+        return None
 
 def format_date_for_gramps(date_range):
-    """Formate une date pour Gramps."""
+    """Formate une date pour Gramps en utilisant dateutil.parser pour une meilleure gestion des formats."""
     if not date_range:
         return None, None
 
@@ -161,15 +159,19 @@ def format_date_for_gramps(date_range):
     if not date_range:
         return None, None
 
+    # Gestion des intervalles de dates
     if 'à' in date_range:
         parts = date_range.split('à')
         if len(parts) == 2:
-            start_year, end_year = parts[0].strip(), parts[1].strip()
-            if is_valid_year(start_year) and is_valid_year(end_year):
-                return f"{start_year}-{end_year}", "Range"
-    else:
-        if is_valid_year(date_range):
-            return date_range, "Span"
+            start_date = parse_date(parts[0].strip())
+            end_date = parse_date(parts[1].strip())
+            if start_date and end_date:
+                return f"{start_date.year}-{end_date.year}", "Range"
+
+    # Gestion des dates simples
+    date = parse_date(date_range)
+    if date:
+        return str(date.year), "Span"
 
     return None, None
 
