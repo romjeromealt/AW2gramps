@@ -16,6 +16,10 @@ https://github.com/martin-majlis/Wikipedia-API/
 
 **Usage**
 
+You could try to use Gramps for displaying some of these records.
+
+See also https://gramps-project.org/wiki/index.php/Events_manager
+
 ```
 $ python3 AW2gramps.py export.csv output.gramps
 Conversion de 13839 entrées...
