@@ -10,6 +10,7 @@ import os
 import mimetypes
 import sys
 import dateutil.parser
+from dateutil.parser import parse
 
 def parse_arguments():
     """Parse les arguments de la ligne de commande."""
@@ -145,8 +146,15 @@ def get_mime_type(filename):
 
 def parse_date(date_str):
     """Parse une date en utilisant dateutil.parser pour une meilleure flexibilité."""
+    if not date_str:
+        return None
+
+    date_str = date_str.strip()
+    if not date_str:
+        return None
+
     try:
-        return dateutil.parser.parse(date_str, fuzzy=True)
+        return parse(date_str, fuzzy=True)
     except ValueError:
         return None
 
@@ -159,21 +167,32 @@ def format_date_for_gramps(date_range):
     if not date_range:
         return None, None
 
-    # Gestion des intervalles de dates
+    # Gestion des intervalles de dates (ex: 1896-1897 ou 1896 à 1897)
     if 'à' in date_range:
         parts = date_range.split('à')
         if len(parts) == 2:
-            start_date = parse_date(parts[0].strip())
-            end_date = parse_date(parts[1].strip())
-            if start_date and end_date:
-                return f"{start_date.year}-{end_date.year}", "Range"
+            start_year = parts[0].strip()
+            end_year = parts[1].strip()
+            if start_year.isdigit() and end_year.isdigit():
+                return f"{start_year}-{end_year}", "Range"
 
-    # Gestion des dates simples
+    # Gestion des intervalles de dates avec un tiret (ex: 1896-1897)
+    if '-' in date_range:
+        parts = date_range.split('-')
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            return f"{parts[0]}-{parts[1]}", "Range"
+
+    # Gestion des dates simples (ex: 1896)
+    if date_range.isdigit():
+        return date_range, "Span"
+
+    # Gestion des dates avec un format plus complexe
     date = parse_date(date_range)
     if date:
         return str(date.year), "Span"
 
-    return None, None
+    # Si la date n'est pas reconnue, retourne une valeur par défaut
+    return "0000", "Span"
 
 def get_wikipedia_summary(title, use_wikipedia):
     """Récupère un résumé Wikipedia si l'option est activée."""
@@ -218,8 +237,9 @@ def create_event(objects, event_info, next_event_handle):
         date.set('val', date_value)
         date.set('type', date_type)
     else:
+        # Utilise une date par défaut si la date n'est pas reconnue
         date = ET.SubElement(event, 'dateval')
-        date.set('val', '0000-00-00')
+        date.set('val', '0000')
         date.set('type', 'Span')
 
     # Description de l'événement
