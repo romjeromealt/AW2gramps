@@ -9,8 +9,6 @@ from datetime import datetime
 import os
 import mimetypes
 import sys
-import dateutil.parser
-from dateutil.parser import parse
 
 def parse_arguments():
     """Parse les arguments de la ligne de commande."""
@@ -137,29 +135,39 @@ def get_mime_type(filename):
     if mime_type:
         return mime_type
 
-    # Types MIME spécifiques non détectés par mimetypes
     if filename.lower().endswith('.webp'):
         return 'image/webp'
     elif filename.lower().endswith('.pdf'):
         return 'application/pdf'
     return 'application/octet-stream'
 
-def parse_date(date_str):
-    """Parse une date en utilisant dateutil.parser pour une meilleure flexibilité."""
+def parse_date_range(date_str):
+    """Parse une plage de dates au format 'YYYY-YYYY' ou 'YYYY à YYYY'."""
     if not date_str:
-        return None
+        return None, None
 
     date_str = date_str.strip()
-    if not date_str:
-        return None
 
-    try:
-        return parse(date_str, fuzzy=True)
-    except ValueError:
-        return None
+    # Gestion des intervalles de dates avec un tiret (ex: 1906-1907)
+    if '-' in date_str:
+        parts = date_str.split('-')
+        if len(parts) == 2 and parts[0].strip().isdigit() and parts[1].strip().isdigit():
+            return f"{parts[0].strip()}-{parts[1].strip()}", "Range"
+
+    # Gestion des intervalles de dates avec "à" (ex: 1906 à 1907)
+    if 'à' in date_str:
+        parts = date_str.split('à')
+        if len(parts) == 2 and parts[0].strip().isdigit() and parts[1].strip().isdigit():
+            return f"{parts[0].strip()}-{parts[1].strip()}", "Range"
+
+    # Gestion des dates simples (ex: 1906)
+    if date_str.isdigit():
+        return date_str, "Span"
+
+    return None, None
 
 def format_date_for_gramps(date_range):
-    """Formate une date pour Gramps en utilisant dateutil.parser pour une meilleure gestion des formats."""
+    """Formate une date pour Gramps."""
     if not date_range:
         return None, None
 
@@ -167,29 +175,14 @@ def format_date_for_gramps(date_range):
     if not date_range:
         return None, None
 
-    # Gestion des intervalles de dates (ex: 1896-1897 ou 1896 à 1897)
-    if 'à' in date_range:
-        parts = date_range.split('à')
-        if len(parts) == 2:
-            start_year = parts[0].strip()
-            end_year = parts[1].strip()
-            if start_year.isdigit() and end_year.isdigit():
-                return f"{start_year}-{end_year}", "Range"
+    # Essayer de parser explicitement les intervalles de dates
+    date_value, date_type = parse_date_range(date_range)
+    if date_value and date_type:
+        return date_value, date_type
 
-    # Gestion des intervalles de dates avec un tiret (ex: 1896-1897)
-    if '-' in date_range:
-        parts = date_range.split('-')
-        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-            return f"{parts[0]}-{parts[1]}", "Range"
-
-    # Gestion des dates simples (ex: 1896)
+    # Gestion des dates simples (ex: 1906)
     if date_range.isdigit():
         return date_range, "Span"
-
-    # Gestion des dates avec un format plus complexe
-    date = parse_date(date_range)
-    if date:
-        return str(date.year), "Span"
 
     # Si la date n'est pas reconnue, retourne une valeur par défaut
     return "0000", "Span"
