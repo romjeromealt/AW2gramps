@@ -8,6 +8,7 @@ from xml.etree import ElementTree as ET
 from datetime import datetime
 import os
 import mimetypes
+import sys
 
 def parse_arguments():
     """Parse les arguments de la ligne de commande."""
@@ -24,6 +25,13 @@ def parse_arguments():
     print(f"Chemin de sortie : {args.output_xml}")
 
     return args
+
+def print_progress(current, total):
+    """Affiche la progression avec une longueur fixe pour éviter les résidus."""
+    progress = int((current / total) * 100)
+    progress_bar = f"\rTraitement : {current}/{total} ({progress}%)" + " " * 10
+    sys.stdout.write(progress_bar)
+    sys.stdout.flush()
 
 def validate_csv_columns(csv_reader):
     """Vérifie que les colonnes requises sont présentes dans le CSV."""
@@ -130,6 +138,8 @@ def get_mime_type(filename):
     # Types MIME spécifiques non détectés par mimetypes
     if filename.lower().endswith('.webp'):
         return 'image/webp'
+    elif filename.lower().endswith('.pdf'):
+        return 'application/pdf'
     return 'application/octet-stream'
 
 def is_valid_year(year_str):
@@ -261,7 +271,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
 
     # Traitement des lieux en premier pour obtenir les handles
     for i, row in enumerate(data, 1):
-        print(f"\rTraitement des entrées : {i}/{total_rows} ({int(i/total_rows*100)}%)", end="")
+        print_progress(i, total_rows)
 
         # Pour chaque paire de coordonnées, créer un lieu
         coords_pairs = parse_coords(row.get('Coordonnées', ''))
@@ -281,7 +291,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
 
     # Traitement des notes et événements
     for i, row in enumerate(data, 1):
-        print(f"\rTraitement des notes : {i}/{total_rows} ({int(i/total_rows*100)}%)", end="")
+        print_progress(i, total_rows)
 
         description = row.get('Description', '').strip()
         wiki_summary = get_wikipedia_summary(row['Titre'], use_wikipedia)
