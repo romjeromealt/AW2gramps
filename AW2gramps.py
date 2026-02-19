@@ -7,8 +7,10 @@ from xml.dom.minidom import parseString
 from xml.etree import ElementTree as ET
 from datetime import datetime
 import os
+import mimetypes
 
 def parse_arguments():
+    """Parse les arguments de la ligne de commande."""
     parser = argparse.ArgumentParser(description="Convertit un fichier CSV en format Gramps XML.")
     parser.add_argument("input_csv", help="Chemin vers le fichier CSV d'entrée.")
     parser.add_argument("output_xml", help="Chemin vers le fichier XML de sortie.")
@@ -24,6 +26,7 @@ def parse_arguments():
     return args
 
 def validate_csv_columns(csv_reader):
+    """Vérifie que les colonnes requises sont présentes dans le CSV."""
     required_columns = {'Titre', 'Coordonnées', 'Description'}
     actual_columns = set(csv_reader.fieldnames)
     missing_columns = required_columns - actual_columns
@@ -80,15 +83,22 @@ def parse_ref(ref):
     return url, meta, sources
 
 def extract_gallery(text):
-    """Extrait les images d'une balise <gallery> et retourne une liste de tuples (fichier, description)."""
+    """Extrait les fichiers d'une balise <gallery> et retourne une liste de tuples (fichier, description)."""
     gallery_pattern = re.compile(r'<gallery>(.*?)</gallery>', re.DOTALL)
     match = gallery_pattern.search(text)
     if not match:
         return []
+
     gallery_content = match.group(1)
-    image_pattern = re.compile(r'Fichier:([^\|]+)\|([^\n]+)')
-    images = image_pattern.findall(gallery_content)
-    return images
+    file_pattern = re.compile(r'Fichier:([^\|]+)\|([^\n]+)')
+    files = file_pattern.findall(gallery_content)
+    return files
+
+def extract_internal_links(text):
+    """Extrait les liens internes de type [[Adresse:...|...]] et retourne une liste de tuples (adresse, texte affiché)."""
+    link_pattern = re.compile(r'\[\[Adresse:(.*?)\|(.*?)\]\]')
+    links = link_pattern.findall(text)
+    return links
 
 def extract_infobox_events(text):
     """Extrait les événements d'une balise {{Infobox actualité|...}}."""
@@ -111,26 +121,16 @@ def extract_infobox_events(text):
 
     return events
 
-def get_wikipedia_summary(title, use_wikipedia):
-    """Récupère un résumé Wikipedia si l'option est activée."""
-    if not use_wikipedia:
-        return None
-    try:
-        import wikipedia
-        wikipedia.set_lang("fr")
-        return wikipedia.summary(title, sentences=3, auto_suggest=False)
-    except ImportError:
-        print("Le module 'wikipedia' n'est pas installé. Utilisez `pip3 install wikipedia` pour l'activer.")
-        return None
-    except wikipedia.exceptions.PageError:
-        return None
-    except wikipedia.exceptions.DisambiguationError as e:
-        if e.options:
-            return wikipedia.summary(e.options[0], sentences=3, auto_suggest=False)
-        return None
-    except Exception as e:
-        print(f"Erreur Wikipedia pour {title}: {e}")
-        return None
+def get_mime_type(filename):
+    """Détermine le type MIME d'un fichier à partir de son extension."""
+    mime_type, _ = mimetypes.guess_type(filename)
+    if mime_type:
+        return mime_type
+
+    # Types MIME spécifiques non détectés par mimetypes
+    if filename.lower().endswith('.webp'):
+        return 'image/webp'
+    return 'application/octet-stream'
 
 def is_valid_year(year_str):
     """Vérifie si une chaîne représente une année valide."""
@@ -162,6 +162,27 @@ def format_date_for_gramps(date_range):
             return date_range, "Span"
 
     return None, None
+
+def get_wikipedia_summary(title, use_wikipedia):
+    """Récupère un résumé Wikipedia si l'option est activée."""
+    if not use_wikipedia:
+        return None
+    try:
+        import wikipedia
+        wikipedia.set_lang("fr")
+        return wikipedia.summary(title, sentences=3, auto_suggest=False)
+    except ImportError:
+        print("Le module 'wikipedia' n'est pas installé. Utilisez `pip3 install wikipedia` pour l'activer.")
+        return None
+    except wikipedia.exceptions.PageError:
+        return None
+    except wikipedia.exceptions.DisambiguationError as e:
+        if e.options:
+            return wikipedia.summary(e.options[0], sentences=3, auto_suggest=False)
+        return None
+    except Exception as e:
+        print(f"Erreur Wikipedia pour {title}: {e}")
+        return None
 
 def create_event(objects, event_info, next_event_handle):
     """Crée un événement Gramps à partir des informations extraites."""
@@ -203,6 +224,7 @@ def create_event(objects, event_info, next_event_handle):
     return next_event_handle + 1
 
 def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
+    """Convertit un fichier CSV en format Gramps XML."""
     print(f"Début de la conversion. Sortie vers : {output_xml_file_path}")
 
     try:
@@ -217,10 +239,13 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
     total_rows = len(data)
     print(f"Conversion de {total_rows} entrées...")
 
-    # Créer la structure XML de base pour Gramps 5.2
+    # Initialisation de mimetypes
+    mimetypes.init()
+
+    # Création de la structure XML de base pour Gramps 5.2
     database = ET.Element('database', xmlns="http://gramps-project.org/xml/1.7.1/")
     header = ET.SubElement(database, 'header')
-    ET.SubElement(header, 'created', date=datetime.now().strftime("%Y-%m-%-d %H:%M:%S"), version="5.2.0")
+    ET.SubElement(header, 'created', date=datetime.now().strftime("%Y-%m-%d %H:%M:%S"), version="5.2.0")
     ET.SubElement(header, 'researcher', name="Generated by script")
     objects = ET.SubElement(database, 'objects')
 
@@ -234,17 +259,39 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
     note_handles = {}
     next_event_handle = 700000000
 
+    # Traitement des lieux en premier pour obtenir les handles
     for i, row in enumerate(data, 1):
         print(f"\rTraitement des entrées : {i}/{total_rows} ({int(i/total_rows*100)}%)", end="")
 
+        # Pour chaque paire de coordonnées, créer un lieu
+        coords_pairs = parse_coords(row.get('Coordonnées', ''))
+        for j, (lat, lon) in enumerate(coords_pairs, 1):
+            place = ET.SubElement(objects, 'placeobj', handle=f"_{place_handle}", change=str(int(datetime.now().timestamp())), id=f"P{place_handle}", type="Place")
+            ptitle = ET.SubElement(place, 'ptitle')
+            ptitle.text = f"{row.get('Titre', 'Inconnu')} (coordonnées {j})"
+            pname = ET.SubElement(place, 'pname')
+            pname.set('value', f"{row.get('Titre', 'Inconnu')} (coordonnées {j})")
+            if lat is not None and lon is not None:
+                coord = ET.SubElement(place, 'coord')
+                coord.set('lat', f"{lat:.6f}")
+                coord.set('long', f"{lon:.6f}")
+
+            note_handles[f"{row['Titre']} (coordonnées {j})"] = f"_{place_handle}"
+            place_handle += 1
+
+    # Traitement des notes et événements
+    for i, row in enumerate(data, 1):
+        print(f"\rTraitement des notes : {i}/{total_rows} ({int(i/total_rows*100)}%)", end="")
+
         description = row.get('Description', '').strip()
-        print(f"\nExtraction des événements pour {row['Titre']}...")
+        wiki_summary = get_wikipedia_summary(row['Titre'], use_wikipedia)
+
+        if wiki_summary:
+            description = f"{description}\n\n--- Wikipedia ---\n{wiki_summary}"
 
         # Extraction des événements
         events = extract_infobox_events(description)
-        print(f"Nombre d'événements extraits : {len(events)}")
         for event_info in events:
-            print(f"Événement extrait : {event_info}")
             next_event_handle = create_event(objects, event_info, next_event_handle)
 
         # Extraction des références
@@ -271,35 +318,24 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
                     next_source_handle += 1
 
         # Extraction des galeries
-        images = extract_gallery(description)
+        files = extract_gallery(description)
 
-        # Création des objets média pour chaque image
-        for image_file, image_desc in images:
-            if image_file not in media_handles:
+        # Création des objets média pour chaque fichier
+        for file_name, file_desc in files:
+            if file_name not in media_handles:
+                mime_type = get_mime_type(file_name)
                 media = ET.SubElement(objects, 'object', handle=f"_{next_media_handle}", id=f"O{next_media_handle}", type="Media", change=str(int(datetime.now().timestamp())))
                 file = ET.SubElement(media, 'file')
-                file.set('src', image_file)
-                file.set('mime', 'image/jpeg')
-                file.set('description', image_desc)
-                media_handles[image_file] = f"_{next_media_handle}"
+                file.set('src', file_name)
+                file.set('mime', mime_type)
+                file.set('description', file_desc)
+                media_handles[file_name] = f"_{next_media_handle}"
                 next_media_handle += 1
 
-        # Pour chaque paire de coordonnées, créer un lieu
+        # Pour chaque paire de coordonnées, ajouter la note
         coords_pairs = parse_coords(row.get('Coordonnées', ''))
         for j, (lat, lon) in enumerate(coords_pairs, 1):
-            place = ET.SubElement(objects, 'placeobj', handle=f"_{place_handle}", change=str(int(datetime.now().timestamp())), id=f"P{place_handle}", type="Place")
-            ptitle = ET.SubElement(place, 'ptitle')
-            ptitle.text = f"{row.get('Titre', 'Inconnu')} (coordonnées {j})"
-            pname = ET.SubElement(place, 'pname')
-            pname.set('value', f"{row.get('Titre', 'Inconnu')} (coordonnées {j})")
-            if lat is not None and lon is not None:
-                coord = ET.SubElement(place, 'coord')
-                coord.set('lat', f"{lat:.6f}")
-                coord.set('long', f"{lon:.6f}")
-
-            # Ajout de la description
-            wiki_summary = get_wikipedia_summary(row['Titre'], use_wikipedia)
-            current_description = f"{description}\n\n--- Wikipedia ---\n{wiki_summary}" if wiki_summary else description
+            current_description = description
 
             # Remplacement des balises <ref> et {{Source|...}}
             for ref in refs:
@@ -314,13 +350,21 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
                     current_description = current_description.replace(f'<ref>{ref}</ref>', " ".join(ref_replacement), 1)
 
             # Remplacement des balises <gallery>
-            if images:
+            if files:
                 media_refs = []
-                for image_file, image_desc in images:
-                    if image_file in media_handles:
-                        media_refs.append(f'<objref hlink="{media_handles[image_file]}"/>')
+                for file_name, file_desc in files:
+                    if file_name in media_handles:
+                        media_refs.append(f'<objref hlink="{media_handles[file_name]}"/>')
                 gallery_replacement = "\n".join(media_refs)
                 current_description = re.sub(r'<gallery>.*?</gallery>', gallery_replacement, current_description, flags=re.DOTALL)
+
+            # Extraction et remplacement des liens internes
+            internal_links = extract_internal_links(current_description)
+            for address, display_text in internal_links:
+                place_key = f"{address} (coordonnées 1)"
+                if place_key in note_handles:
+                    link_replacement = f'<place hlink="{note_handles[place_key]}">{display_text}</place>'
+                    current_description = current_description.replace(f'[[Adresse:{address}|{display_text}]]', link_replacement)
 
             if current_description:
                 note = ET.SubElement(objects, 'note', handle=f"_{note_handle}", change=str(int(datetime.now().timestamp())), id=f"N{note_handle}", type="Html code")
@@ -328,10 +372,14 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
                 text.text = f"<b>{row['Titre']} (coordonnées {j})</b><p>{current_description.replace(chr(10), '<br>')}</p>"
                 note_handles[f"{row['Titre']} (coordonnées {j})"] = f"_{note_handle}"
                 note_handle += 1
-                noteref = ET.SubElement(place, 'noteref')
-                noteref.set('hlink', note_handles[f"{row['Titre']} (coordonnées {j})"])
 
-            place_handle += 1
+                # Ajout de la référence à la note dans le lieu
+                place_key = f"{row['Titre']} (coordonnées {j})"
+                if place_key in note_handles:
+                    for place in objects.findall('.//placeobj'):
+                        if place.get('id') == f"P{place_handle - len(coords_pairs) + j}":
+                            noteref = ET.SubElement(place, 'noteref')
+                            noteref.set('hlink', note_handles[place_key])
 
     print("\nGénération du fichier XML...")
 
