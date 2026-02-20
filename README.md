@@ -11,8 +11,11 @@ Under linux:
 
 ```$ pip3 install wikipedia```
 
-or the more recent one: `wikipedia-api` from:  
+a more recent one: `wikipedia-api` from:  
 https://github.com/martin-majlis/Wikipedia-API/
+
+or a Mediawiki bot like: 
+https://www.mediawiki.org/wiki/Manual:Pywikibot
 
 **Usage**
 
@@ -27,7 +30,7 @@ Traitement des notes : 13839/13839 (100%)
 Traitement des lieux : 13839/13839 (100%)
 ```
 
-*Very slow*
+try to retrieve and add some wikipedia descriptions : *Very slow*
 ```
 $ python3 AW2gramps.py export.csv output.gramps --wikipedia
 Conversion de 13839 entrées...
