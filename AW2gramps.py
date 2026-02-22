@@ -3,8 +3,7 @@
 import csv
 import re
 import argparse
-from xml.dom.minidom import parseString
-from xml.etree import ElementTree as ET
+from xml.sax.saxutils import escape
 from datetime import datetime
 import os
 import mimetypes
@@ -16,6 +15,7 @@ def parse_arguments():
     parser.add_argument("input_csv", help="Chemin vers le fichier CSV d'entrée.")
     parser.add_argument("output_xml", help="Chemin vers le fichier XML de sortie.")
     parser.add_argument("--wikipedia", "-w", action="store_true", help="Activer la recherche Wikipedia.")
+    parser.add_argument("--batch-size", type=int, default=10, help="Nombre d'entrées à traiter par lot.")
     args = parser.parse_args()
 
     if not args.input_csv or not args.output_xml:
@@ -23,6 +23,7 @@ def parse_arguments():
 
     print(f"Chemin d'entrée : {args.input_csv}")
     print(f"Chemin de sortie : {args.output_xml}")
+    print(f"Taille des lots : {args.batch_size}")
 
     return args
 
@@ -129,6 +130,20 @@ def extract_infobox_events(text):
 
     return events
 
+def extract_architects(text):
+    """Extrait les noms des architectes à partir des balises {{Infobox actualité}}."""
+    infobox_pattern = re.compile(r'\{\{\s*Infobox\s+actualité\s*\|\s*(.*?)\}\}', re.DOTALL)
+    architect_pattern = re.compile(r'\|\s*architecte\s*=\s*([^\n\|]+)')
+
+    architects = set()
+    infobox_matches = infobox_pattern.findall(text)
+    for match in infobox_matches:
+        architect_matches = architect_pattern.findall(match)
+        for architect in architect_matches:
+            architects.add(architect.strip())
+
+    return list(architects)
+
 def get_mime_type(filename):
     """Détermine le type MIME d'un fichier à partir de son extension."""
     mime_type, _ = mimetypes.guess_type(filename)
@@ -208,47 +223,123 @@ def get_wikipedia_summary(title, use_wikipedia):
         print(f"Erreur Wikipedia pour {title}: {e}")
         return None
 
-def create_event(objects, event_info, next_event_handle):
+def create_event(xml_file, event_info, event_handle, place_handle, architect_handles, current_timestamp):
     """Crée un événement Gramps à partir des informations extraites."""
-    event = ET.SubElement(
-        objects, 'event',
-        handle=f"_{next_event_handle}",
-        id=f"E{next_event_handle}",
-        change=str(int(datetime.now().timestamp()))
-    )
-
-    # Type d'événement
-    event_type = ET.SubElement(event, 'type')
-    event_type.text = event_info.get('type', 'Événement')
+    xml_file.write(f'    <event handle="_{event_handle}" id="E{event_handle}" change="{current_timestamp}">\n')
+    xml_file.write(f'      <type>{escape(event_info.get("type", "Événement"))}</type>\n')
 
     # Date de l'événement
     date_range = event_info.get('date', '')
     date_value, date_type = format_date_for_gramps(date_range)
 
     if date_value and date_type:
-        date = ET.SubElement(event, 'dateval')
-        date.set('val', date_value)
-        date.set('type', date_type)
+        xml_file.write(f'      <dateval val="{date_value}" type="{date_type}"/>\n')
     else:
-        # Utilise une date par défaut si la date n'est pas reconnue
-        date = ET.SubElement(event, 'dateval')
-        date.set('val', '0000')
-        date.set('type', 'Span')
+        xml_file.write(f'      <dateval val="0000" type="Span"/>\n')
 
     # Description de l'événement
-    description = ET.SubElement(event, 'description')
-    description.text = event_info.get('description', '')
+    xml_file.write(f'      <description>{escape(event_info.get("description", ""))}</description>\n')
+
+    # Lien vers le lieu
+    xml_file.write(f'      <placeref hlink="_{place_handle}"/>\n')
+
+    # Lien vers l'architecte
+    for architect in architect_handles:
+        xml_file.write(f'      <personref hlink="_{architect_handles[architect]}" role="Architect"/>\n')
 
     # Attributs supplémentaires
     for key, value in event_info.items():
         if key not in ['date', 'type', 'description']:
-            attribute = ET.SubElement(event, 'attribute')
-            attribute.set('type', key)
-            attribute.set('value', value)
+            xml_file.write(f'      <attribute type="{key}" value="{escape(value)}"/>\n')
 
-    return next_event_handle + 1
+    xml_file.write(f'    </event>\n')
 
-def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
+    return event_handle + 1
+
+def process_row(row, xml_file, place_handles, note_handles, person_handles, event_handles, architect_handles, source_handles, media_handles, current_timestamp, use_wikipedia):
+    """Traite une seule ligne de données et écrit directement dans le fichier XML."""
+    lat, lon = parse_coords(row.get('Coordonnées', ''))[0]
+
+    # Écrire le lieu
+    place_handle = f"_{len(place_handles) + 100000000}"
+    place_handles[place_handle] = row.get('Titre', 'Inconnu')
+
+    xml_file.write(f'    <place handle="{place_handle}" id="P{place_handle[1:]}" change="{current_timestamp}">\n')
+    xml_file.write(f'      <ptitle>{escape(place_handles[place_handle])}</ptitle>\n')
+    xml_file.write(f'      <pname value="{escape(place_handles[place_handle])}"/>\n')
+    if lat and lon:
+        xml_file.write(f'      <coord lat="{lat}" long="{lon}"/>\n')
+
+    # Extraction des architectes
+    architects = extract_architects(row.get('Description', ''))
+    for architect in architects:
+        if architect not in architect_handles:
+            # Écrire l'architecte
+            person_handle = f"_{len(person_handles) + 200000000}"
+            person_handles[person_handle] = architect
+            architect_handles[architect] = person_handle
+            xml_file.write(f'    <person handle="{person_handle}" id="I{person_handle[1:]}" change="{current_timestamp}">\n')
+            xml_file.write(f'      <name type="Birth Name">\n')
+            surname = architect.split()[-1] if architect.split() else 'Inconnu'
+            firstname = ' '.join(architect.split()[:-1]) if len(architect.split()) > 1 else 'Inconnu'
+            xml_file.write(f'        <surname>{escape(surname)}</surname>\n')
+            xml_file.write(f'        <first>{escape(firstname)}</first>\n')
+            xml_file.write(f'      </name>\n')
+            xml_file.write(f'    </person>\n')
+
+        # Ajouter une référence à l'architecte dans le lieu
+        xml_file.write(f'      <personref hlink="{architect_handles[architect]}" role="Architect"/>\n')
+
+    # Ajouter une note (description)
+    if 'Description' in row and row['Description']:
+        note_handle = f"_{len(note_handles) + 400000000}"
+        note_handles[note_handle] = row['Description']
+        xml_file.write(f'      <noteref hlink="{note_handle}"/>\n')
+        xml_file.write(f'    </place>\n')
+        xml_file.write(f'    <note handle="{note_handle}" id="N{note_handle[1:]}" change="{current_timestamp}" type="Note">\n')
+        xml_file.write(f'      <text>{escape(note_handles[note_handle])}</text>\n')
+        xml_file.write(f'    </note>\n')
+    else:
+        xml_file.write(f'    </place>\n')
+
+    # Extraction des événements
+    events = extract_infobox_events(row.get('Description', ''))
+    for event_info in events:
+        event_info['description'] = row.get('Description', '')
+        event_handles.add(create_event(xml_file, event_info, len(event_handles) + 300000000, place_handle, architect_handles, current_timestamp))
+
+    # Extraction des références
+    refs = extract_refs(row.get('Description', ''))
+    for ref in refs:
+        url, meta, sources = parse_ref(ref)
+        if url and url not in source_handles:
+            source_handle = f"_{len(source_handles) + 500000000}"
+            source_handles[url] = source_handle
+            xml_file.write(f'    <source handle="{source_handle}" id="S{source_handle[1:]}" change="{current_timestamp}">\n')
+            xml_file.write(f'      <stitle>{escape(url)}</stitle>\n')
+            if meta.get("consulté"):
+                xml_file.write(f'      <spubinfo>{escape(meta["consulté"])}</spubinfo>\n')
+            xml_file.write(f'    </source>\n')
+        for source_model in sources:
+            if source_model not in source_handles:
+                source_handle = f"_{len(source_handles) + 500000000}"
+                source_handles[source_model] = source_handle
+                xml_file.write(f'    <source handle="{source_handle}" id="S{source_handle[1:]}" change="{current_timestamp}">\n')
+                xml_file.write(f'      <stitle>{escape(source_model)}</stitle>\n')
+                xml_file.write(f'    </source>\n')
+
+    # Extraction des galeries
+    files = extract_gallery(row.get('Description', ''))
+    for file_name, file_desc in files:
+        if file_name not in media_handles:
+            media_handle = f"_{len(media_handles) + 600000000}"
+            media_handles[file_name] = media_handle
+            mime_type = get_mime_type(file_name)
+            xml_file.write(f'    <object handle="{media_handle}" id="O{media_handle[1:]}" type="Media" change="{current_timestamp}">\n')
+            xml_file.write(f'      <file src="{escape(file_name)}" mime="{mime_type}" description="{escape(file_desc)}"/>\n')
+            xml_file.write(f'    </object>\n')
+
+def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia, batch_size):
     """Convertit un fichier CSV en format Gramps XML."""
     print(f"Début de la conversion. Sortie vers : {output_xml_file_path}")
 
@@ -256,7 +347,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
         with open(csv_file_path, mode='r', encoding='utf-8') as csv_file:
             csv_reader = csv.DictReader(csv_file, delimiter=',', quotechar='"')
             validate_csv_columns(csv_reader)
-            data = [row for row in csv_reader]
+            data = list(csv_reader)
     except Exception as e:
         print(f"Erreur lors de la lecture du CSV : {e}")
         return
@@ -264,183 +355,48 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia):
     total_rows = len(data)
     print(f"Conversion de {total_rows} entrées...")
 
-    # Initialisation de mimetypes
-    mimetypes.init()
-
-    # Création de la structure XML de base pour Gramps 5.2
-    database = ET.Element('database', xmlns="http://gramps-project.org/xml/1.7.1/")
-    header = ET.SubElement(database, 'header')
-    ET.SubElement(header, 'created', date=datetime.now().strftime("%Y-%m-%d %H:%M:%S"), version="5.2.0")
-    ET.SubElement(header, 'researcher', name="Generated by script")
-    objects = ET.SubElement(database, 'objects')
-
-    # Compteurs pour les handles
-    place_handle = 100000000
-    note_handle = 400000000
-    source_handles = {}
-    next_source_handle = 500000000
-    media_handles = {}
-    next_media_handle = 600000000
-    note_handles = {}
-    next_event_handle = 700000000
-
-    # Traitement des lieux en premier pour obtenir les handles
-    for i, row in enumerate(data, 1):
-        print_progress(i, total_rows)
-
-        # Pour chaque paire de coordonnées, créer un lieu
-        coords_pairs = parse_coords(row.get('Coordonnées', ''))
-        for j, (lat, lon) in enumerate(coords_pairs, 1):
-            place = ET.SubElement(objects, 'placeobj', handle=f"_{place_handle}", change=str(int(datetime.now().timestamp())), id=f"P{place_handle}", type="Place")
-            ptitle = ET.SubElement(place, 'ptitle')
-            ptitle.text = f"{row.get('Titre', 'Inconnu')} (coordonnées {j})"
-            pname = ET.SubElement(place, 'pname')
-            pname.set('value', f"{row.get('Titre', 'Inconnu')} (coordonnées {j})")
-            if lat is not None and lon is not None:
-                coord = ET.SubElement(place, 'coord')
-                coord.set('lat', f"{lat:.6f}")
-                coord.set('long', f"{lon:.6f}")
-
-            note_handles[f"{row['Titre']} (coordonnées {j})"] = f"_{place_handle}"
-            place_handle += 1
-
-    # Traitement des notes et événements
-    for i, row in enumerate(data, 1):
-        print_progress(i, total_rows)
-
-        description = row.get('Description', '').strip()
-        wiki_summary = get_wikipedia_summary(row['Titre'], use_wikipedia)
-
-        if wiki_summary:
-            description = f"{description}\n\n--- Wikipedia ---\n{wiki_summary}"
-
-        # Extraction des événements
-        events = extract_infobox_events(description)
-        for event_info in events:
-            next_event_handle = create_event(objects, event_info, next_event_handle)
-
-        # Extraction des références
-        refs = extract_refs(description)
-
-        # Création des objets source pour chaque référence unique
-        for ref in refs:
-            url, meta, sources = parse_ref(ref)
-            if url and url not in source_handles:
-                source = ET.SubElement(objects, 'source', handle=f"_{next_source_handle}", id=f"S{next_source_handle}", change=str(int(datetime.now().timestamp())))
-                stitle = ET.SubElement(source, 'stitle')
-                stitle.text = url
-                if meta.get("consulté"):
-                    spubinfo = ET.SubElement(source, 'spubinfo')
-                    spubinfo.text = meta["consulté"]
-                source_handles[url] = f"_{next_source_handle}"
-                next_source_handle += 1
-            for source_model in sources:
-                if source_model not in source_handles:
-                    source = ET.SubElement(objects, 'source', handle=f"_{next_source_handle}", id=f"S{next_source_handle}", change=str(int(datetime.now().timestamp())))
-                    stitle = ET.SubElement(source, 'stitle')
-                    stitle.text = source_model
-                    source_handles[source_model] = f"_{next_source_handle}"
-                    next_source_handle += 1
-
-        # Extraction des galeries
-        files = extract_gallery(description)
-
-        # Création des objets média pour chaque fichier
-        for file_name, file_desc in files:
-            if file_name not in media_handles:
-                mime_type = get_mime_type(file_name)
-                media = ET.SubElement(objects, 'object', handle=f"_{next_media_handle}", id=f"O{next_media_handle}", type="Media", change=str(int(datetime.now().timestamp())))
-                file = ET.SubElement(media, 'file')
-                file.set('src', file_name)
-                file.set('mime', mime_type)
-                file.set('description', file_desc)
-                media_handles[file_name] = f"_{next_media_handle}"
-                next_media_handle += 1
-
-        # Pour chaque paire de coordonnées, ajouter la note
-        coords_pairs = parse_coords(row.get('Coordonnées', ''))
-        for j, (lat, lon) in enumerate(coords_pairs, 1):
-            current_description = description
-
-            # Remplacement des balises <ref> et {{Source|...}}
-            for ref in refs:
-                url, meta, sources = parse_ref(ref)
-                ref_replacement = []
-                if url and url in source_handles:
-                    ref_replacement.append(f'<sourceref hlink="{source_handles[url]}"/>')
-                for source_model in sources:
-                    if source_model in source_handles:
-                        ref_replacement.append(f'<sourceref hlink="{source_handles[source_model]}"/>')
-                if ref_replacement:
-                    current_description = current_description.replace(f'<ref>{ref}</ref>', " ".join(ref_replacement), 1)
-
-            # Remplacement des balises <gallery>
-            if files:
-                media_refs = []
-                for file_name, file_desc in files:
-                    if file_name in media_handles:
-                        media_refs.append(f'<objref hlink="{media_handles[file_name]}"/>')
-                gallery_replacement = "\n".join(media_refs)
-                current_description = re.sub(r'<gallery>.*?</gallery>', gallery_replacement, current_description, flags=re.DOTALL)
-
-            # Extraction et remplacement des liens internes
-            internal_links = extract_internal_links(current_description)
-            for address, display_text in internal_links:
-                place_key = f"{address} (coordonnées 1)"
-                if place_key in note_handles:
-                    link_replacement = f'<place hlink="{note_handles[place_key]}">{display_text}</place>'
-                    current_description = current_description.replace(f'[[Adresse:{address}|{display_text}]]', link_replacement)
-
-            if current_description:
-                note = ET.SubElement(objects, 'note', handle=f"_{note_handle}", change=str(int(datetime.now().timestamp())), id=f"N{note_handle}", type="Html code")
-                text = ET.SubElement(note, 'text')
-                text.text = f"<b>{row['Titre']} (coordonnées {j})</b><p>{current_description.replace(chr(10), '<br>')}</p>"
-                note_handles[f"{row['Titre']} (coordonnées {j})"] = f"_{note_handle}"
-                note_handle += 1
-
-                # Ajout de la référence à la note dans le lieu
-                place_key = f"{row['Titre']} (coordonnées {j})"
-                if place_key in note_handles:
-                    for place in objects.findall('.//placeobj'):
-                        if place.get('id') == f"P{place_handle - len(coords_pairs) + j}":
-                            noteref = ET.SubElement(place, 'noteref')
-                            noteref.set('hlink', note_handles[place_key])
-
-    print("\nGénération du fichier XML...")
-
-    # Vérifie que le chemin de sortie n'est pas vide
-    if not output_xml_file_path:
-        raise ValueError("Le chemin de sortie ne peut pas être vide.")
-
-    print(f"Chemin de sortie final : {output_xml_file_path}")
-
     # Vérifie que le chemin de sortie est valide
     output_dir = os.path.dirname(output_xml_file_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
         print(f"Création du répertoire : {output_dir}")
 
-    # Convertir en chaîne XML
-    xml_str = ET.tostring(database, encoding='utf-8').decode('utf-8')
-    doctype_declaration = '''<!DOCTYPE database PUBLIC "-//Gramps//DTD Gramps XML 1.7.1//EN"
-"http://gramps-project.org/xml/1.7.1/grampsxml.dtd">'''
-    xml_str = f"{doctype_declaration}\n{xml_str}"
+    current_timestamp = str(int(datetime.now().timestamp()))
 
-    try:
-        dom = parseString(xml_str)
-        with open(output_xml_file_path, 'w', encoding='utf-8') as f:
-            dom.writexml(f, indent='  ', addindent='  ', newl='\n', encoding='utf-8')
-        print(f"Conversion terminée avec succès ! Le fichier a été enregistré sous : {output_xml_file_path}")
-    except Exception as e:
-        print(f"Erreur lors de l'écriture du fichier XML : {e}")
-        # Enregistre le XML brut en cas d'erreur
-        with open(output_xml_file_path, 'w', encoding='utf-8') as f:
-            f.write(xml_str)
-        print(f"Fichier XML brut enregistré sous : {output_xml_file_path}")
+    # Dictionnaires pour stocker les handles et éviter les doublons
+    place_handles = {}
+    note_handles = {}
+    person_handles = {}
+    event_handles = set()
+    architect_handles = {}
+    source_handles = {}
+    media_handles = {}
+
+    # Écrire le fichier XML par morceaux
+    with open(output_xml_file_path, 'w', encoding='utf-8') as xml_file:
+        xml_file.write('''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE database PUBLIC "-//Gramps//DTD Gramps XML 1.7.1//EN"
+"http://gramps-project.org/xml/1.7.1/grampsxml.dtd">
+<database xmlns="http://gramps-project.org/xml/1.7.1/">
+  <header>
+    <created date="''' + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + '''" version="5.2.0"/>
+    <researcher name="Generated by script"/>
+  </header>
+  <objects>
+''')
+
+        # Traitement des données par lots
+        for i, row in enumerate(data):
+            print_progress(i + 1, total_rows)
+            process_row(row, xml_file, place_handles, note_handles, person_handles, event_handles, architect_handles, source_handles, media_handles, current_timestamp, use_wikipedia)
+
+        xml_file.write('  </objects>\n</database>\n')
+
+    print(f"\nConversion terminée avec succès ! Le fichier a été enregistré sous : {output_xml_file_path}")
 
 def main():
     args = parse_arguments()
-    csv_to_gramps_xml(args.input_csv, args.output_xml, args.wikipedia)
+    csv_to_gramps_xml(args.input_csv, args.output_xml, args.wikipedia, args.batch_size)
 
 if __name__ == "__main__":
     main()
