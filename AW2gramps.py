@@ -65,6 +65,29 @@ def parse_coords(coords_str):
                 coords_pairs.append((lat, lon))
     return coords_pairs if coords_pairs else [(None, None)]
 
+def extract_refs(text):
+    """Extrait les balises <ref>...</ref> d'un texte et retourne une liste de références."""
+    ref_pattern = re.compile(r'<ref>(.*?)</ref>', re.DOTALL)
+    refs = ref_pattern.findall(text)
+    return refs
+
+def extract_sources_from_ref(ref):
+    """Extrait les sources des modèles {{Source|...}} dans une référence."""
+    source_pattern = re.compile(r'\{\{Source\|(.*?)\}\}')
+    sources = source_pattern.findall(ref)
+    return sources
+
+def parse_ref(ref):
+    """Parse une référence pour extraire les sources et les métadonnées."""
+    url = None
+    meta = {}
+    sources = extract_sources_from_ref(ref)
+    if ref.strip().startswith("http"):
+        parts = ref.split()
+        url = parts[0]
+        meta["consulté"] = " ".join(parts[1:]) if len(parts) > 1 else ""
+    return url, meta, sources
+
 def extract_architects(text):
     """Extrait les noms des architectes depuis une balise {{Infobox actualité}}."""
     architect_pattern = re.compile(r'\|\\s*architecte\\s*=\\s*([^\\n\\|]+)')
@@ -152,10 +175,12 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
     event_handle = 700000000
     media_handle = 600000000
     person_handle = 200000000
+    source_handle = 500000000
 
     # Dictionnaires pour éviter les doublons
     media_handles = {}
     person_handles = {}
+    source_handles = {}
 
     for i, row in enumerate(data, 1):
         print_progress(i, total_rows)
@@ -183,6 +208,38 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
 
                 person_handles[architect] = f"_{person_handle}"
                 person_handle += 1
+
+        # Extraction des références
+        refs = extract_refs(row.get('Description', ''))
+        for ref in refs:
+            url, meta, sources = parse_ref(ref)
+            if url and url not in source_handles:
+                source = ET.SubElement(objects, 'source')
+                source.set('handle', f"_{source_handle}")
+                source.set('change', str(int(datetime.now().timestamp())))
+                source.set('id', f"S{source_handle}")
+
+                stitle = ET.SubElement(source, 'stitle')
+                stitle.text = url
+                if meta.get("consulté"):
+                    spubinfo = ET.SubElement(source, 'spubinfo')
+                    spubinfo.text = meta["consulté"]
+
+                source_handles[url] = f"_{source_handle}"
+                source_handle += 1
+
+            for source_model in sources:
+                if source_model not in source_handles:
+                    source = ET.SubElement(objects, 'source')
+                    source.set('handle', f"_{source_handle}")
+                    source.set('change', str(int(datetime.now().timestamp())))
+                    source.set('id', f"S{source_handle}")
+
+                    stitle = ET.SubElement(source, 'stitle')
+                    stitle.text = source_model
+
+                    source_handles[source_model] = f"_{source_handle}"
+                    source_handle += 1
 
         # Création des lieux
         coords_pairs = parse_coords(row.get('Coordonnées', ''))
@@ -276,6 +333,17 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                 if file_name in media_handles:
                     objref = ET.SubElement(note, 'objref')
                     objref.set('hlink', media_handles[file_name])
+
+            # Ajout des références aux sources
+            for ref in refs:
+                url, meta, sources = parse_ref(ref)
+                if url and url in source_handles:
+                    sourceref = ET.SubElement(note, 'sourceref')
+                    sourceref.set('hlink', source_handles[url])
+                for source_model in sources:
+                    if source_model in source_handles:
+                        sourceref = ET.SubElement(note, 'sourceref')
+                        sourceref.set('hlink', source_handles[source_model])
 
             note_handle += 1
 
