@@ -8,6 +8,7 @@ from datetime import datetime
 import os
 import mimetypes
 import sys
+import uuid
 
 def parse_arguments():
     """Parse les arguments de la ligne de commande."""
@@ -57,16 +58,13 @@ def dms_to_decimal(dms):
 def parse_coords(coords_str):
     """Extrait et convertit toutes les paires de coordonnées DMS en décimal."""
     if not coords_str:
-        return [(None, None)]
-    coords_pairs = []
+        return (None, None)
     parts = [p.strip() for p in coords_str.split(',') if p.strip()]
-    for i in range(0, len(parts), 2):
-        if i + 1 < len(parts):
-            lat = dms_to_decimal(parts[i])
-            lon = dms_to_decimal(parts[i + 1])
-            if lat is not None and lon is not None:
-                coords_pairs.append((lat, lon))
-    return coords_pairs if coords_pairs else [(None, None)]
+    if len(parts) >= 2:
+        lat = dms_to_decimal(parts[0])
+        lon = dms_to_decimal(parts[1])
+        return (lat, lon)
+    return (None, None)
 
 def extract_refs(text):
     """Extrait les balises <ref>...</ref> d'un texte et retourne une liste de références."""
@@ -131,213 +129,152 @@ def extract_infobox_events(text):
     return events
 
 def extract_architects(text):
-    """Extrait les noms des architectes à partir des balises {{Infobox actualité}}."""
-    infobox_pattern = re.compile(r'\{\{\s*Infobox\s+actualité\s*\|\s*(.*?)\}\}', re.DOTALL)
-    architect_pattern = re.compile(r'\|\s*architecte\s*=\s*([^\n\|]+)')
+    """Extrait les noms des architectes depuis une balise {{Infobox actualité}}."""
+    architect_pattern = re.compile(r'\|\\s*architecte\\s*=\\s*([^\\n\\|]+)')
+    infobox_pattern = re.compile(r'\\{\\{\\s*Infobox\\s+actualité\\s*\\|(.*?)\\}\\}', re.DOTALL)
+    infobox_matches = infobox_pattern.findall(text)
 
     architects = set()
-    infobox_matches = infobox_pattern.findall(text)
     for match in infobox_matches:
         architect_matches = architect_pattern.findall(match)
         for architect in architect_matches:
             architects.add(architect.strip())
-
-    return list(architects)
+    return architects
 
 def get_mime_type(filename):
     """Détermine le type MIME d'un fichier à partir de son extension."""
     mime_type, _ = mimetypes.guess_type(filename)
     if mime_type:
         return mime_type
-
     if filename.lower().endswith('.webp'):
         return 'image/webp'
     elif filename.lower().endswith('.pdf'):
         return 'application/pdf'
     return 'application/octet-stream'
 
-def parse_date_range(date_str):
-    """Parse une plage de dates au format 'YYYY-YYYY' ou 'YYYY à YYYY'."""
-    if not date_str:
-        return None, None
-
-    date_str = date_str.strip()
-
-    # Gestion des intervalles de dates avec un tiret (ex: 1906-1907)
-    if '-' in date_str:
-        parts = date_str.split('-')
-        if len(parts) == 2 and parts[0].strip().isdigit() and parts[1].strip().isdigit():
-            return f"{parts[0].strip()}-{parts[1].strip()}", "Range"
-
-    # Gestion des intervalles de dates avec "à" (ex: 1906 à 1907)
-    if 'à' in date_str:
-        parts = date_str.split('à')
-        if len(parts) == 2 and parts[0].strip().isdigit() and parts[1].strip().isdigit():
-            return f"{parts[0].strip()}-{parts[1].strip()}", "Range"
-
-    # Gestion des dates simples (ex: 1906)
-    if date_str.isdigit():
-        return date_str, "Span"
-
-    return None, None
-
 def format_date_for_gramps(date_range):
     """Formate une date pour Gramps."""
     if not date_range:
-        return None, None
+        return "0000-00-00", None
 
     date_range = date_range.strip()
     if not date_range:
-        return None, None
+        return "0000-00-00", None
 
-    # Essayer de parser explicitement les intervalles de dates
-    date_value, date_type = parse_date_range(date_range)
-    if date_value and date_type:
-        return date_value, date_type
-
-    # Gestion des dates simples (ex: 1906)
     if date_range.isdigit():
-        return date_range, "Span"
+        return f"{date_range}-00-00", None
 
-    # Si la date n'est pas reconnue, retourne une valeur par défaut
-    return "0000", "Span"
+    return "0000-00-00", None
 
-def get_wikipedia_summary(title, use_wikipedia):
-    """Récupère un résumé Wikipedia si l'option est activée."""
-    if not use_wikipedia:
-        return None
-    try:
-        import wikipedia
-        wikipedia.set_lang("fr")
-        return wikipedia.summary(title, sentences=3, auto_suggest=False)
-    except ImportError:
-        print("Le module 'wikipedia' n'est pas installé. Utilisez `pip3 install wikipedia` pour l'activer.")
-        return None
-    except wikipedia.exceptions.PageError:
-        return None
-    except wikipedia.exceptions.DisambiguationError as e:
-        if e.options:
-            return wikipedia.summary(e.options[0], sentences=3, auto_suggest=False)
-        return None
-    except Exception as e:
-        print(f"Erreur Wikipedia pour {title}: {e}")
-        return None
-
-def create_event(xml_file, event_info, event_handle, place_handle, architect_handles, current_timestamp):
+def create_event(xml_file, event_info, event_id, place_handle, current_timestamp):
     """Crée un événement Gramps à partir des informations extraites."""
-    xml_file.write(f'    <event handle="_{event_handle}" id="E{event_handle}" change="{current_timestamp}">\n')
-    xml_file.write(f'      <type>{escape(event_info.get("type", "Événement"))}</type>\n')
+    event_handle = f"_{uuid.uuid4().hex}"
 
-    # Date de l'événement
+    xml_file.write(f'    <event handle="{event_handle}" id="E{event_id:04d}" change="{current_timestamp}">\n')
+
+    event_type = event_info.get("type", "Événement")
+    xml_file.write(f'      <type>{escape(event_type)}</type>\n')
+
     date_range = event_info.get('date', '')
-    date_value, date_type = format_date_for_gramps(date_range)
+    date_value, _ = format_date_for_gramps(date_range)
+    xml_file.write(f'      <dateval val="{date_value}"/>\n')
 
-    if date_value and date_type:
-        xml_file.write(f'      <dateval val="{date_value}" type="{date_type}"/>\n')
-    else:
-        xml_file.write(f'      <dateval val="0000" type="Span"/>\n')
+    description = event_info.get("description", "")
+    xml_file.write(f'      <description>{escape(description)}</description>\n')
 
-    # Description de l'événement
-    xml_file.write(f'      <description>{escape(event_info.get("description", ""))}</description>\n')
-
-    # Lien vers le lieu
-    xml_file.write(f'      <placeref hlink="_{place_handle}"/>\n')
-
-    # Lien vers l'architecte
-    for architect in architect_handles:
-        xml_file.write(f'      <personref hlink="_{architect_handles[architect]}" role="Architect"/>\n')
-
-    # Attributs supplémentaires
-    for key, value in event_info.items():
-        if key not in ['date', 'type', 'description']:
-            xml_file.write(f'      <attribute type="{key}" value="{escape(value)}"/>\n')
+    if place_handle:
+        xml_file.write(f'      <place hlink="{place_handle}"/>\n')
 
     xml_file.write(f'    </event>\n')
 
-    return event_handle + 1
+    return event_id + 1
 
-def process_row(row, xml_file, place_handles, note_handles, person_handles, event_handles, architect_handles, source_handles, media_handles, current_timestamp, use_wikipedia):
-    """Traite une seule ligne de données et écrit directement dans le fichier XML."""
-    lat, lon = parse_coords(row.get('Coordonnées', ''))[0]
+def create_person(xml_file, architect, person_id, current_timestamp):
+    """Crée une personne Gramps à partir des informations extraites."""
+    person_handle = f"_{uuid.uuid4().hex}"
 
-    # Écrire le lieu
-    place_handle = f"_{len(place_handles) + 100000000}"
-    place_handles[place_handle] = row.get('Titre', 'Inconnu')
+    surname = architect.split()[-1] if architect.split() else 'Inconnu'
+    firstname = ' '.join(architect.split()[:-1]) if len(architect.split()) > 1 else 'Inconnu'
 
-    xml_file.write(f'    <place handle="{place_handle}" id="P{place_handle[1:]}" change="{current_timestamp}">\n')
-    xml_file.write(f'      <ptitle>{escape(place_handles[place_handle])}</ptitle>\n')
-    xml_file.write(f'      <pname value="{escape(place_handles[place_handle])}"/>\n')
+    xml_file.write(f'    <person handle="{person_handle}" id="I{person_id:04d}" change="{current_timestamp}">\n')
+    xml_file.write(f'      <name type="Birth Name">\n')
+    xml_file.write(f'        <surname>{escape(surname)}</surname>\n')
+    xml_file.write(f'        <first>{escape(firstname)}</first>\n')
+    xml_file.write(f'      </name>\n')
+    xml_file.write(f'    </person>\n')
+
+def create_place(xml_file, title, place_id, lat, lon, current_timestamp):
+    """Crée un lieu Gramps à partir des informations extraites."""
+    place_handle = f"_{uuid.uuid4().hex}"
+
+    xml_file.write(f'    <place handle="{place_handle}" id="P{place_id:04d}" change="{current_timestamp}">\n')
+    xml_file.write(f'      <ptitle>{escape(title)}</ptitle>\n')
+    xml_file.write(f'      <pname value="{escape(title)}"/>\n')
     if lat and lon:
         xml_file.write(f'      <coord lat="{lat}" long="{lon}"/>\n')
+    xml_file.write(f'    </place>\n')
 
-    # Extraction des architectes
+    return place_handle
+
+def create_note(xml_file, text, note_id, current_timestamp):
+    """Crée une note Gramps à partir des informations extraites."""
+    note_handle = f"_{uuid.uuid4().hex}"
+
+    xml_file.write(f'    <note handle="{note_handle}" id="N{note_id:04d}" change="{current_timestamp}" type="Note">\n')
+    xml_file.write(f'      <text>{escape(text)}</text>\n')
+    xml_file.write(f'    </note>\n')
+
+    return note_handle
+
+def create_media(xml_file, file_name, file_desc, media_id, current_timestamp):
+    """Crée un média Gramps à partir des informations extraites."""
+    media_handle = f"_{uuid.uuid4().hex}"
+    mime_type = get_mime_type(file_name)
+
+    xml_file.write(f'    <object handle="{media_handle}" id="O{media_id:04d}" type="Media" change="{current_timestamp}">\n')
+    xml_file.write(f'      <file src="{escape(file_name)}" mime="{mime_type}" description="{escape(file_desc)}"/>\n')
+    xml_file.write(f'    </object>\n')
+
+def process_row(row, events_data, persons_data, places_data, notes_data, medias_data, current_timestamp, next_event_id, next_person_id, next_place_id, next_note_id, next_media_id):
+    """Traite une seule ligne de données et prépare les données pour l'écriture XML."""
+    lat, lon = parse_coords(row.get('Coordonnées', ''))
+
+    # Vérification du titre
+    title = row.get('Titre', '').strip()
+    if not title:
+        title = "Lieu sans nom"
+
+    # Extraction et conversion des architectes
     architects = extract_architects(row.get('Description', ''))
     for architect in architects:
-        if architect not in architect_handles:
-            # Écrire l'architecte
-            person_handle = f"_{len(person_handles) + 200000000}"
-            person_handles[person_handle] = architect
-            architect_handles[architect] = person_handle
-            xml_file.write(f'    <person handle="{person_handle}" id="I{person_handle[1:]}" change="{current_timestamp}">\n')
-            xml_file.write(f'      <name type="Birth Name">\n')
-            surname = architect.split()[-1] if architect.split() else 'Inconnu'
-            firstname = ' '.join(architect.split()[:-1]) if len(architect.split()) > 1 else 'Inconnu'
-            xml_file.write(f'        <surname>{escape(surname)}</surname>\n')
-            xml_file.write(f'        <first>{escape(firstname)}</first>\n')
-            xml_file.write(f'      </name>\n')
-            xml_file.write(f'    </person>\n')
-
-        # Ajouter une référence à l'architecte dans le lieu
-        xml_file.write(f'      <personref hlink="{architect_handles[architect]}" role="Architect"/>\n')
-
-    # Ajouter une note (description)
-    if 'Description' in row and row['Description']:
-        note_handle = f"_{len(note_handles) + 400000000}"
-        note_handles[note_handle] = row['Description']
-        xml_file.write(f'      <noteref hlink="{note_handle}"/>\n')
-        xml_file.write(f'    </place>\n')
-        xml_file.write(f'    <note handle="{note_handle}" id="N{note_handle[1:]}" change="{current_timestamp}" type="Note">\n')
-        xml_file.write(f'      <text>{escape(note_handles[note_handle])}</text>\n')
-        xml_file.write(f'    </note>\n')
-    else:
-        xml_file.write(f'    </place>\n')
+        if architect not in persons_data:
+            persons_data[architect] = next_person_id
+            next_person_id += 1
 
     # Extraction des événements
-    events = extract_infobox_events(row.get('Description', ''))
-    for event_info in events:
+    events_in_row = extract_infobox_events(row.get('Description', ''))
+    for event_info in events_in_row:
         event_info['description'] = row.get('Description', '')
-        event_handles.add(create_event(xml_file, event_info, len(event_handles) + 300000000, place_handle, architect_handles, current_timestamp))
+        events_data.append((event_info, next_event_id, title))
+        next_event_id += 1
 
-    # Extraction des références
-    refs = extract_refs(row.get('Description', ''))
-    for ref in refs:
-        url, meta, sources = parse_ref(ref)
-        if url and url not in source_handles:
-            source_handle = f"_{len(source_handles) + 500000000}"
-            source_handles[url] = source_handle
-            xml_file.write(f'    <source handle="{source_handle}" id="S{source_handle[1:]}" change="{current_timestamp}">\n')
-            xml_file.write(f'      <stitle>{escape(url)}</stitle>\n')
-            if meta.get("consulté"):
-                xml_file.write(f'      <spubinfo>{escape(meta["consulté"])}</spubinfo>\n')
-            xml_file.write(f'    </source>\n')
-        for source_model in sources:
-            if source_model not in source_handles:
-                source_handle = f"_{len(source_handles) + 500000000}"
-                source_handles[source_model] = source_handle
-                xml_file.write(f'    <source handle="{source_handle}" id="S{source_handle[1:]}" change="{current_timestamp}">\n')
-                xml_file.write(f'      <stitle>{escape(source_model)}</stitle>\n')
-                xml_file.write(f'    </source>\n')
+    # Extraction des notes
+    if 'Description' in row and row['Description']:
+        notes_data.append((row['Description'], next_note_id))
+        next_note_id += 1
 
-    # Extraction des galeries
+    # Ajout du lieu
+    places_data.append((title, lat, lon, next_place_id))
+    next_place_id += 1
+
+    # Extraction des médias
     files = extract_gallery(row.get('Description', ''))
     for file_name, file_desc in files:
-        if file_name not in media_handles:
-            media_handle = f"_{len(media_handles) + 600000000}"
-            media_handles[file_name] = media_handle
-            mime_type = get_mime_type(file_name)
-            xml_file.write(f'    <object handle="{media_handle}" id="O{media_handle[1:]}" type="Media" change="{current_timestamp}">\n')
-            xml_file.write(f'      <file src="{escape(file_name)}" mime="{mime_type}" description="{escape(file_desc)}"/>\n')
-            xml_file.write(f'    </object>\n')
+        if file_name not in medias_data:
+            medias_data[file_name] = (file_desc, next_media_id)
+            next_media_id += 1
+
+    return next_event_id, next_person_id, next_place_id, next_note_id, next_media_id
 
 def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia, batch_size):
     """Convertit un fichier CSV en format Gramps XML."""
@@ -355,7 +292,6 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia, batch_
     total_rows = len(data)
     print(f"Conversion de {total_rows} entrées...")
 
-    # Vérifie que le chemin de sortie est valide
     output_dir = os.path.dirname(output_xml_file_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
@@ -363,16 +299,25 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia, batch_
 
     current_timestamp = str(int(datetime.now().timestamp()))
 
-    # Dictionnaires pour stocker les handles et éviter les doublons
-    place_handles = {}
-    note_handles = {}
-    person_handles = {}
-    event_handles = set()
-    architect_handles = {}
-    source_handles = {}
-    media_handles = {}
+    events_data = []
+    persons_data = {}
+    places_data = []
+    notes_data = []
+    medias_data = {}
 
-    # Écrire le fichier XML par morceaux
+    next_event_id = 1
+    next_person_id = 1
+    next_place_id = 1
+    next_note_id = 1
+    next_media_id = 1
+
+    for i, row in enumerate(data):
+        print_progress(i + 1, total_rows)
+        next_event_id, next_person_id, next_place_id, next_note_id, next_media_id = process_row(
+            row, events_data, persons_data, places_data, notes_data, medias_data, current_timestamp,
+            next_event_id, next_person_id, next_place_id, next_note_id, next_media_id
+        )
+
     with open(output_xml_file_path, 'w', encoding='utf-8') as xml_file:
         xml_file.write('''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE database PUBLIC "-//Gramps//DTD Gramps XML 1.7.1//EN"
@@ -382,15 +327,40 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path, use_wikipedia, batch_
     <created date="''' + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + '''" version="5.2.0"/>
     <researcher name="Generated by script"/>
   </header>
-  <objects>
 ''')
 
-        # Traitement des données par lots
-        for i, row in enumerate(data):
-            print_progress(i + 1, total_rows)
-            process_row(row, xml_file, place_handles, note_handles, person_handles, event_handles, architect_handles, source_handles, media_handles, current_timestamp, use_wikipedia)
+        # Écriture des événements
+        xml_file.write('  <events>\n')
+        for event_info, event_id, place_title in events_data:
+            place_handle = None
+            create_event(xml_file, event_info, event_id, place_handle, current_timestamp)
+        xml_file.write('  </events>\n')
 
-        xml_file.write('  </objects>\n</database>\n')
+        # Écriture des personnes
+        xml_file.write('  <people>\n')
+        for architect, person_id in persons_data.items():
+            create_person(xml_file, architect, person_id, current_timestamp)
+        xml_file.write('  </people>\n')
+
+        # Écriture des lieux
+        xml_file.write('  <places>\n')
+        for title, lat, lon, place_id in places_data:
+            create_place(xml_file, title, place_id, lat, lon, current_timestamp)
+        xml_file.write('  </places>\n')
+
+        # Écriture des notes
+        xml_file.write('  <notes>\n')
+        for text, note_id in notes_data:
+            create_note(xml_file, text, note_id, current_timestamp)
+        xml_file.write('  </notes>\n')
+
+        # Écriture des médias
+        xml_file.write('  <objects>\n')
+        for file_name, (file_desc, media_id) in medias_data.items():
+            create_media(xml_file, file_name, file_desc, media_id, current_timestamp)
+        xml_file.write('  </objects>\n')
+
+        xml_file.write('</database>\n')
 
     print(f"\nConversion terminée avec succès ! Le fichier a été enregistré sous : {output_xml_file_path}")
 
