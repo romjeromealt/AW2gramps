@@ -25,16 +25,13 @@ See also https://gramps-project.org/wiki/index.php/Events_manager
 
 ```
 $ python3 AW2gramps.py export.csv output.gramps
+Chemin d'entrée : export.csv
+Chemin de sortie : output.gramps
+Début de la conversion. Sortie vers : output.gramps
 Conversion de 13839 entrées...
-Traitement des notes : 13839/13839 (100%)
-Traitement des lieux : 13839/13839 (100%)
+Traitement : 13839/13839 (100%)          
+Conversion terminée avec succès ! Le fichier a été enregistré sous : output.gramps
+
 ```
 
-try to retrieve and add some wikipedia descriptions : *Very slow*
-```
-$ python3 AW2gramps.py export.csv output.gramps --wikipedia
-Conversion de 13839 entrées...
-Traitement des notes : 677/13839 (4%)
-...
-```
 
