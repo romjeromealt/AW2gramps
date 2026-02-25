@@ -77,6 +77,7 @@ def extract_architects(text):
         architect_matches = architect_pattern.findall(match)
         for architect in architect_matches:
             architects.add(architect.strip())
+            print(f"Architectes extraits pour ce texte : {architects}")
     return architects
 
 def extract_gallery(text):
@@ -145,6 +146,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
     person_handles = {}
     source_handles = {}
     place_handles = {}
+    note_handles = {}
 
     # Compteurs pour les handles
     place_id = 100000000
@@ -325,6 +327,12 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                     hlink=person_handles[architect],
                     role='Architect')
 
+        # Ajout d'une référence à la note si le titre du lieu correspond à une note existante
+        note_key = place['title']  # Utilise le titre du lieu comme clé
+        if note_key in note_handles:
+            noteref = create_xml_element(place_elem, 'noteref')
+            noteref.set('hlink', note_handles[note_key])
+
     for media in media_handles.values():
         media_elem = create_xml_element(objects, 'object',
             handle=media['handle'],
@@ -349,9 +357,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
 
     for note in notes_data:
         note_elem = create_xml_element(notes, 'note',
-        handle=note['handle'],
-        change=str(int(datetime.now().timestamp())), 
-        type='Html code')
+            handle=note['handle'],
+            change=str(int(datetime.now().timestamp())),
+            type='Html code')
 
         # Traitement des références dans le texte de la note
         text_with_refs = note['text']
@@ -382,6 +390,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         for source_handle in note['source_handles']:
             create_xml_element(note_elem, 'sourceref', hlink=source_handle)
 
+        # Ajoute le titre de la note (ou une clé unique) à note_handles
+        note_key = note['text'][:50]  # Utilise les 50 premiers caractères comme clé
+        note_handles[note_key] = note['handle']
 
     output_dir = os.path.dirname(output_xml_file_path)
     if output_dir and not os.path.exists(output_dir):
