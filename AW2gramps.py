@@ -135,10 +135,10 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
 
     # Création des sections principales dans l'ordre requis par Gramps
     events = create_xml_element(database, 'events')
-    people = create_xml_element(database, 'people')
+    #people = create_xml_element(database, 'people')
     places = create_xml_element(database, 'places')
-    objects = create_xml_element(database, 'objects')
-    notes = create_xml_element(database, 'notes')
+    #objects = create_xml_element(database, 'objects')
+    #notes = create_xml_element(database, 'notes')
 
     # Dictionnaires pour éviter les doublons
     media_handles = {}
@@ -174,7 +174,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             if architect not in people_data:
                 people_data[architect] = {
                     'handle': f"_{person_id}",
-                    'id': f"I{person_id:04d}",
+                    #'id': f"I{person_id:04d}",
                     'surname': architect.split()[-1] if architect.split() else 'Inconnu',
                     'firstname': ' '.join(architect.split()[:-1]) if len(architect.split()) > 1 else 'Inconnu'
                 }
@@ -188,7 +188,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             if url and url not in source_handles:
                 source_handles[url] = {
                     'handle': f"_{source_id}",
-                    'id': f"S{source_id:04d}",
+                    #'id': f"S{source_id:04d}",
                     'title': url,
                     'pubinfo': meta.get("consulté", "")
                 }
@@ -198,7 +198,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                 if source_model not in source_handles:
                     source_handles[source_model] = {
                         'handle': f"_{source_id}",
-                        'id': f"S{source_id:04d}",
+                        #'id': f"S{source_id:04d}",
                         'title': source_model,
                         'pubinfo': ""
                     }
@@ -210,7 +210,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             place_key = f"{title} (coordonnées {j})"
             places_data[place_key] = {
                 'handle': f"_{place_id}",
-                'id': f"P{place_id:04d}",
+                #'id': f"P{place_id:04d}",
                 'title': place_key,
                 'lat': lat,
                 'lon': lon,
@@ -224,7 +224,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         for event_info in events_list:
             events_data.append({
                 'handle': f"_{event_id}",
-                'id': f"E{event_id:04d}",
+                #'id': f"E{event_id:04d}",
                 'type': event_info.get('type', 'Construction'),
                 'date': event_info.get('date', ''),
                 'description': f"Événement lié à {title}",
@@ -239,7 +239,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             if file_name not in media_handles:
                 media_handles[file_name] = {
                     'handle': f"_{media_id}",
-                    'id': f"O{media_id:04d}",
+                    #'id': f"O{media_id:04d}",
                     'file_name': file_name,
                     'mime': get_mime_type(file_name),
                     'description': file_desc
@@ -250,7 +250,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         if 'Description' in row and row['Description']:
             notes_data.append({
                 'handle': f"_{note_id}",
-                'id': f"N{note_id:04d}",
+                #'id': f"N{note_id:04d}",
                 'text': row['Description'],
                 'media_handles': [media_handles[file_name]['handle'] for file_name, _ in files if file_name in media_handles],
                 'source_handles': []
@@ -270,8 +270,8 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
     for event in events_data:
         event_elem = create_xml_element(events, 'event',
             handle=event['handle'],
-            change=str(int(datetime.now().timestamp())),
-            id=event['id'])
+            change=str(int(datetime.now().timestamp())),)
+            #id=event['id'])
 
         create_xml_element(event_elem, 'type', text=event['type'])
 
@@ -282,32 +282,28 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
 
         create_xml_element(event_elem, 'description', text=event['description'])
 
-        # Référence au lieu
-        if event['place_handle']:
-            create_xml_element(event_elem, 'place', hlink=event['place_handle'])
-
         # Référence aux architectes
-        for architect in event['architects']:
-            if architect in person_handles:
-                create_xml_element(event_elem, 'personref',
-                    hlink=person_handles[architect],
-                    role='Architect')
+        #for architect in event['architects']:
+            #if architect in person_handles:
+                #create_xml_element(event_elem, 'personref',
+                    #hlink=person_handles[architect],
+                    #role='Architect')
 
-    for architect, person in people_data.items():
-        person_elem = create_xml_element(people, 'person',
-            handle=person['handle'],
-            change=str(int(datetime.now().timestamp())),
-            id=person['id'])
+    #for architect, person in people_data.items():
+        #person_elem = create_xml_element(people, 'person',
+            #handle=person['handle'],
+            #change=str(int(datetime.now().timestamp())),
+            #id=person['id'])
 
-        name = create_xml_element(person_elem, 'name', type="Birth Name")
-        create_xml_element(name, 'surname', text=person['surname'])
-        create_xml_element(name, 'first', text=person['firstname'])
+        #name = create_xml_element(person_elem, 'name', type="Birth Name")
+        #create_xml_element(name, 'surname', text=person['surname'])
+        #create_xml_element(name, 'first', text=person['firstname'])
 
     for place_key, place in places_data.items():
-        place_elem = create_xml_element(places, 'place',
+        place_elem = create_xml_element(places, 'placeobj',
             handle=place['handle'],
-            change=str(int(datetime.now().timestamp())),
-            id=place['id'])
+            change=str(int(datetime.now().timestamp())),)
+            #id=place['id'])
 
         create_xml_element(place_elem, 'ptitle', text=place['title'])
         pname = create_xml_element(place_elem, 'pname')
@@ -319,50 +315,50 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             coord.set('long', f"{place['lon']:.6f}")
 
         # Ajout des références aux architectes
-        for architect in place['architects']:
-            if architect in person_handles:
-                create_xml_element(place_elem, 'personref',
-                    hlink=person_handles[architect],
-                    role='Architect')
+        #for architect in place['architects']:
+            #if architect in person_handles:
+                #create_xml_element(place_elem, 'personref',
+                    #hlink=person_handles[architect],
+                    #role='Architect')
 
-    for media in media_handles.values():
-        media_elem = create_xml_element(objects, 'object',
-            handle=media['handle'],
-            change=str(int(datetime.now().timestamp())),
-            id=media['id'],
-            type='Media')
+    #for media in media_handles.values():
+        #media_elem = create_xml_element(objects, 'object',
+            #handle=media['handle'],
+            #change=str(int(datetime.now().timestamp())),
+            #id=media['id'],
+            #type='Media')
 
-        file_elem = create_xml_element(media_elem, 'file')
-        file_elem.set('src', media['file_name'])
-        file_elem.set('mime', media['mime'])
-        file_elem.set('description', media['description'])
+        #file_elem = create_xml_element(media_elem, 'file')
+        #file_elem.set('src', media['file_name'])
+        #file_elem.set('mime', media['mime'])
+        #file_elem.set('description', media['description'])
 
-    for source in source_handles.values():
-        source_elem = create_xml_element(objects, 'source',
-            handle=source['handle'],
-            change=str(int(datetime.now().timestamp())),
-            id=source['id'])
+    #for source in source_handles.values():
+        #source_elem = create_xml_element(objects, 'source',
+            #handle=source['handle'],
+            #change=str(int(datetime.now().timestamp())),
+            #id=source['id'])
 
-        create_xml_element(source_elem, 'stitle', text=source['title'])
-        if source['pubinfo']:
-            create_xml_element(source_elem, 'spubinfo', text=source['pubinfo'])
+        #create_xml_element(source_elem, 'stitle', text=source['title'])
+        #if source['pubinfo']:
+            #create_xml_element(source_elem, 'spubinfo', text=source['pubinfo'])
 
-    for note in notes_data:
-        note_elem = create_xml_element(notes, 'note',
-            handle=note['handle'],
-            change=str(int(datetime.now().timestamp())),
-            id=note['id'],
-            type='Note')
+    #for note in notes_data:
+        #note_elem = create_xml_element(notes, 'note',
+            #handle=note['handle'],
+            #change=str(int(datetime.now().timestamp())),
+            #id=note['id'],
+            #type='Note')
 
-        create_xml_element(note_elem, 'text', text=note['text'])
+        #create_xml_element(note_elem, 'text', text=note['text'])
 
         # Ajout des références aux médias
-        for media_handle in note['media_handles']:
-            create_xml_element(note_elem, 'objref', hlink=media_handle)
+        #for media_handle in note['media_handles']:
+            #create_xml_element(note_elem, 'objref', hlink=media_handle)
 
         # Ajout des références aux sources
-        for source_handle in note['source_handles']:
-            create_xml_element(note_elem, 'sourceref', hlink=source_handle)
+        #for source_handle in note['source_handles']:
+            #create_xml_element(note_elem, 'sourceref', hlink=source_handle)
 
     output_dir = os.path.dirname(output_xml_file_path)
     if output_dir and not os.path.exists(output_dir):
