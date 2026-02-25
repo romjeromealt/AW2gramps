@@ -371,11 +371,22 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
     # Convertir en chaîne XML bien formatée
     xml_str = ET.tostring(database, encoding='utf-8')
     xml_pretty = minidom.parseString(xml_str).toprettyxml(indent="  ", encoding="utf-8")
+    xml_pretty = xml_pretty.decode('utf-8')
+
+    # Déclaration DOCTYPE et XML
+    xml_declaration = '<?xml version="1.0" encoding="utf-8"?>\n'
     doctype_declaration = '''<!DOCTYPE database PUBLIC "-//Gramps//DTD Gramps XML 1.7.1//EN"
 "http://gramps-project.org/xml/1.7.1/grampsxml.dtd">'''
-    xml_pretty = xml_pretty.decode('utf-8')
-    xml_pretty = f"{doctype_declaration}\n{xml_pretty}"
 
+    # On extrait le contenu entre <database> et </database> pour éviter la duplication
+    start_tag = xml_pretty.find('<database')
+    end_tag = xml_pretty.rfind('</database>') + len('</database>')
+    content = xml_pretty[start_tag:end_tag]
+
+    # On reconstruit le fichier XML complet
+    xml_pretty = f"{xml_declaration}{doctype_declaration}\n{content}"
+
+    # Écriture dans le fichier
     with open(output_xml_file_path, 'w', encoding='utf-8') as f:
         f.write(xml_pretty)
 
