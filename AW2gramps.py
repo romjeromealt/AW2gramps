@@ -349,20 +349,39 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
 
     for note in notes_data:
         note_elem = create_xml_element(notes, 'note',
-            handle=note['handle'],
-            change=str(int(datetime.now().timestamp())),
-            #id=note['id'],
-            type='Note')
+        handle=note['handle'],
+        change=str(int(datetime.now().timestamp())), 
+        type='Html code')
 
-        create_xml_element(note_elem, 'text', text=note['text'])
+        # Traitement des références dans le texte de la note
+        text_with_refs = note['text']
+        ref_pattern = re.compile(r'<ref>(.*?)</ref>', re.DOTALL)
+        refs = ref_pattern.findall(text_with_refs)
+
+        for ref in refs:
+            ref_replacement = []
+            url, meta, sources = parse_ref(ref)
+
+            if url and url in source_handles:
+                ref_replacement.append('<sourceref hlink="{}"/>'.format(source_handles[url]['handle']))
+
+            for source_model in sources:
+                if source_model in source_handles:
+                    ref_replacement.append('<sourceref hlink="{}"/>'.format(source_handles[source_model]['handle']))
+
+            if ref_replacement:
+                text_with_refs = text_with_refs.replace('<ref>{}</ref>'.format(ref), " ".join(ref_replacement), 1)
+
+        create_xml_element(note_elem, 'text', text=text_with_refs)
 
         # Ajout des références aux médias
-        #for media_handle in note['media_handles']:
-            #create_xml_element(note_elem, 'objref', hlink=media_handle)
+        for media_handle in note['media_handles']:
+            create_xml_element(note_elem, 'objref', hlink=media_handle)
 
-        # Ajout des références aux sources
-        #for source_handle in note['source_handles']:
-            #create_xml_element(note_elem, 'sourceref', hlink=source_handle)
+        # Ajout des références aux sources (si nécessaire)
+        for source_handle in note['source_handles']:
+            create_xml_element(note_elem, 'sourceref', hlink=source_handle)
+
 
     output_dir = os.path.dirname(output_xml_file_path)
     if output_dir and not os.path.exists(output_dir):
