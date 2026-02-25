@@ -138,7 +138,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
     people = create_xml_element(database, 'people')
     places = create_xml_element(database, 'places')
     objects = create_xml_element(database, 'objects')
-    #notes = create_xml_element(database, 'notes')
+    notes = create_xml_element(database, 'notes')
 
     # Dictionnaires pour éviter les doublons
     media_handles = {}
@@ -340,17 +340,17 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             #id=source['id'])
 
         create_xml_element(source_elem, 'stitle', text=source['title'])
-        #if source['pubinfo']:
-            #create_xml_element(source_elem, 'spubinfo', text=source['pubinfo'])
+        if source['pubinfo']:
+            create_xml_element(source_elem, 'spubinfo', text=source['pubinfo'])
 
-    #for note in notes_data:
-        #note_elem = create_xml_element(notes, 'note',
-            #handle=note['handle'],
-            #change=str(int(datetime.now().timestamp())),
+    for note in notes_data:
+        note_elem = create_xml_element(notes, 'note',
+            handle=note['handle'],
+            change=str(int(datetime.now().timestamp())),
             #id=note['id'],
-            #type='Note')
+            type='Note')
 
-        #create_xml_element(note_elem, 'text', text=note['text'])
+        create_xml_element(note_elem, 'text', text=note['text'])
 
         # Ajout des références aux médias
         #for media_handle in note['media_handles']:
