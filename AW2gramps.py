@@ -282,6 +282,10 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
 
         create_xml_element(event_elem, 'description', text=event['description'])
 
+        # Référence au lieu
+        if event['place_handle']:
+            create_xml_element(event_elem, 'place', hlink=event['place_handle'])
+
         # Référence aux architectes
         for architect in event['architects']:
             if architect in person_handles:
