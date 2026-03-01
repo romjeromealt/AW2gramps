@@ -73,11 +73,10 @@ def extract_architects(text):
     match = re.search(pattern, text)
     architects = set()
     if match:
-        architects_list = [a.strip() for a in match.group(1).split(',')]
+        # Remplace les \; par ; pour faciliter le split
+        architects_list = [a.strip() for a in match.group(1).replace('\;', ';').split(';')]
         architects.update(architects_list)
-        architect = match.group(1).strip()
-        architects.add(architect)
-        print(f"Architectes extraits pour ce texte : {architect}")
+        print(f"Architectes extraits : {architects}")
     return architects
 
 def extract_gallery(text):
@@ -176,7 +175,6 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             if architect not in people_data:
                 people_data[architect] = {
                     'handle': f"_{person_id}",
-                    #'id': f"I{person_id:04d}",
                     'surname': architect.split()[-1] if architect.split() else 'Inconnu',
                     'firstname': ' '.join(architect.split()[:-1]) if len(architect.split()) > 1 else 'Inconnu'
                 }
@@ -231,7 +229,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                 'date': event_info.get('date', ''),
                 'description': f"Événement lié à {title}",
                 'place_handle': place_handles.get(f"{title} (coordonnées 1)"),
-                'architects': architects
+                'architects': architects if isinstance(architects, set) else set()
             })
             event_id += 1
 
@@ -292,8 +290,8 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         for architect in event['architects']:
             if architect in person_handles:
                 create_xml_element(event_elem, 'personref',
-                    hlink=person_handles[architect],
-                    role='Architect')
+                hlink=person_handles[architect],
+                role='Architect')
 
     for architect, person in people_data.items():
         person_elem = create_xml_element(people, 'person',
