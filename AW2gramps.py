@@ -68,16 +68,14 @@ def parse_coords(coords_str):
 
 def extract_architects(text):
     """Extrait les noms des architectes depuis une balise {{Infobox actualité}}."""
-    architect_pattern = re.compile(r'\|\\s*architecte\\s*=\\s*([^\\n\\|]+)')
-    infobox_pattern = re.compile(r'\\{\\{\\s*Infobox\\s+actualité\\s*\\|(.*?)\\}\\}', re.DOTALL)
-    infobox_matches = infobox_pattern.findall(text)
+    # Expression rationnelle pour extraire le nom de l'architecte
+    pattern = r'\|\s*architecte\s*=\s*([^(]+)'
+    match = re.search(pattern, text)
 
     architects = set()
-    for match in infobox_matches:
-        architect_matches = architect_pattern.findall(match)
-        for architect in architect_matches:
-            architects.add(architect.strip())
-            print(f"Architectes extraits pour ce texte : {architects}")
+    if match:
+        architects = match.group(1).strip()
+        print(f"Architectes extraits pour ce texte : {architects}")
     return architects
 
 def extract_gallery(text):
@@ -319,13 +317,6 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             coord = create_xml_element(place_elem, 'coord')
             coord.set('lat', f"{place['lat']:.6f}")
             coord.set('long', f"{place['lon']:.6f}")
-
-        # Ajout des références aux architectes
-        for architect in place['architects']:
-            if architect in person_handles:
-                create_xml_element(place_elem, 'personref',
-                    hlink=person_handles[architect],
-                    role='Architect')
 
         # Ajout d'une référence à la note si le titre du lieu correspond à une note existante
         note_key = place['title']  # Utilise le titre du lieu comme clé
