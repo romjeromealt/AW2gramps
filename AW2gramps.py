@@ -69,13 +69,15 @@ def parse_coords(coords_str):
 def extract_architects(text):
     """Extrait les noms des architectes depuis une balise {{Infobox actualité}}."""
     # Expression rationnelle pour extraire le nom de l'architecte
-    pattern = r'\|\s*architecte\s*=\s*([^(]+)'
+    pattern = r'\|\s*architecte\s*=\s*([^\n|]+)'
     match = re.search(pattern, text)
-
     architects = set()
     if match:
-        architects = match.group(1).strip()
-        print(f"Architectes extraits pour ce texte : {architects}")
+        architects_list = [a.strip() for a in match.group(1).split(',')]
+        architects.update(architects_list)
+        architect = match.group(1).strip()
+        architects.add(architect)
+        print(f"Architectes extraits pour ce texte : {architect}")
     return architects
 
 def extract_gallery(text):
