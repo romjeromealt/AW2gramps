@@ -144,6 +144,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
     source_handles = {}
     place_handles = {}
     note_handles = {}
+    architect_events = {}  # {architect_name: [event_handle1, event_handle2, ...]}
 
     # Compteurs pour les handles
     place_id = 100000000
@@ -225,6 +226,11 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                 'place_handle': place_handles.get(f"{title} (coordonnées 1)"),
                 'architects': architects if isinstance(architects, set) else set()
             })
+            # Stocke l'événement pour chaque architecte
+            for architect in architects:
+                if architect not in architect_events:
+                    architect_events[architect] = []
+                architect_events[architect].append(f"_{event_id}")
             event_id += 1
 
         # Création des médias
@@ -261,20 +267,27 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             note_handles[note_handle] = note_handle
             note_id += 1
 
-    # Associe les notes aux objets (événements, lieux, etc.)
-    for event in events_data:
-        # Trouve la note associée à cet événement (exemple : via le titre)
-        for note in notes_data:
+    # Associe les notes aux objets (événements, lieux, personnes, médias, sources)
+    for note in notes_data:
+        for event in events_data:
             if event['description'] in note['text']:
                 event['note_handle'] = note['handle']
-                break
 
-    for place_key, place in places_data.items():
-        # Trouve la note associée à ce lieu (exemple : via le titre)
-        for note in notes_data:
+        for place_key, place in places_data.items():
             if place['title'] in note['text']:
                 place['note_handle'] = note['handle']
-                break
+
+        for architect, person in people_data.items():
+            if architect in note['text']:
+                person['note_handle'] = note['handle']
+
+        for media in media_handles.values():
+            if media['file_name'] in note['text']:
+                media['note_handle'] = note['handle']
+
+        for source in source_handles.values():
+            if source['title'] in note['text']:
+                source['note_handle'] = note['handle']
 
     # Création des éléments XML à partir des données collectées
     for event in events_data:
@@ -295,13 +308,6 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         if event['place_handle']:
             create_xml_element(event_elem, 'place', hlink=event['place_handle'])
 
-        # Référence aux architectes
-        for architect in event['architects']:
-            if architect in person_handles:
-                create_xml_element(event_elem, 'personref',
-                hlink=person_handles[architect],
-                role='Architect')
-
         # Ajoute une référence à la note si elle existe
         if 'note_handle' in event and event['note_handle'] in note_handles:
             noteref = create_xml_element(event_elem, 'noteref')
@@ -316,12 +322,17 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         create_xml_element(name, 'surname', text=person['surname'])
         create_xml_element(name, 'first', text=person['firstname'])
 
+        # Ajoute les références aux événements
+        if architect in architect_events:
+            for event_handle in architect_events[architect]:
+                create_xml_element(person_elem, 'eventref',
+                    hlink=event_handle,
+                    role='Architect')
+
         # Ajoute une référence à la note si elle existe
-        for note in notes_data:
-            if architect in note['text']:
-                noteref = create_xml_element(person_elem, 'noteref')
-                noteref.set('hlink', note['handle'])
-                break
+        if 'note_handle' in person and person['note_handle'] in note_handles:
+            noteref = create_xml_element(person_elem, 'noteref')
+            noteref.set('hlink', person['note_handle'])
 
     for place_key, place in places_data.items():
         place_elem = create_xml_element(places, 'placeobj',
@@ -354,11 +365,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         file_elem.set('description', media['description'])
 
         # Ajoute une référence à la note si elle existe
-        for note in notes_data:
-            if media['file_name'] in note['text']:
-                noteref = create_xml_element(media_elem, 'noteref')
-                noteref.set('hlink', note['handle'])
-                break
+        if 'note_handle' in media and media['note_handle'] in note_handles:
+            noteref = create_xml_element(media_elem, 'noteref')
+            noteref.set('hlink', media['note_handle'])
 
     for source in source_handles.values():
         source_elem = create_xml_element(objects, 'source',
@@ -370,11 +379,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             create_xml_element(source_elem, 'spubinfo', text=source['pubinfo'])
 
         # Ajoute une référence à la note si elle existe
-        for note in notes_data:
-            if source['title'] in note['text']:
-                noteref = create_xml_element(source_elem, 'noteref')
-                noteref.set('hlink', note['handle'])
-                break
+        if 'note_handle' in source and source['note_handle'] in note_handles:
+            noteref = create_xml_element(source_elem, 'noteref')
+            noteref.set('hlink', source['note_handle'])
 
     for note in notes_data:
         note_elem = create_xml_element(notes, 'note',
