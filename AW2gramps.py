@@ -389,6 +389,10 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             change=str(int(datetime.now().timestamp())),
             type='Html code')
 
+        # Ajout des liens internes
+        note_text = note['text']
+        note_text, _ = add_internal_links_to_note(note_elem, note_text, people_data, places_data, source_handles)
+
         # Traitement des références dans le texte de la note
         text_with_refs = note['text']
         ref_pattern = re.compile(r'<ref>(.*?)</ref>', re.DOTALL)
@@ -489,6 +493,43 @@ def extract_infobox_events(text):
             events.append(event)
 
     return events
+
+def add_internal_links_to_note(note_elem, note_text, people_data, places_data, source_handles):
+    """
+    Ajoute les balises <style name="link"> pour les références internes dans le texte de la note.
+    """
+    text_with_links = note_text
+    styles_added = []
+
+    # Exemple : Lier les noms de personnes
+    for architect, person in people_data.items():
+        if architect in note_text:
+            start = note_text.find(architect)
+            end = start + len(architect)
+            style = ET.SubElement(note_elem, 'style', name="link", value=f"gramps://Person/handle/{person['handle'][1:]}")
+            range_elem = ET.SubElement(style, 'range', start=str(start), end=str(end))
+            styles_added.append((start, end, architect))
+
+    # Exemple : Lier les noms de lieux
+    for place_key, place in places_data.items():
+        if place['title'] in note_text:
+            start = note_text.find(place['title'])
+            end = start + len(place['title'])
+            style = ET.SubElement(note_elem, 'style', name="link", value=f"gramps://Place/handle/{place['handle'][1:]}")
+            range_elem = ET.SubElement(style, 'range', start=str(start), end=str(end))
+            styles_added.append((start, end, place['title']))
+
+    # Exemple : Lier les sources
+    for source_url, source in source_handles.items():
+        if source['title'] in note_text:
+            start = note_text.find(source['title'])
+            end = start + len(source['title'])
+            style = ET.SubElement(note_elem, 'style', name="link", value=f"gramps://Source/handle/{source['handle'][1:]}")
+            range_elem = ET.SubElement(style, 'range', start=str(start), end=str(end))
+            styles_added.append((start, end, source['title']))
+
+    return text_with_links, styles_added
+
 
 def main():
     args = parse_arguments()
