@@ -107,6 +107,117 @@ def create_xml_element(parent, tag, text=None, **attrs):
         element.text = text
     return element
 
+def extract_note_refs(text):
+    """Extrait les références aux notes depuis un texte."""
+    return set(re.findall(r'<noteref hlink="([^"]+)"/>', text))
+
+def extract_refs(text):
+    """Extrait les balises <ref>...</ref> d'un texte et retourne une liste de références."""
+    ref_pattern = re.compile(r'<ref>(.*?)</ref>', re.DOTALL)
+    refs = ref_pattern.findall(text)
+    return refs
+
+def extract_sources_from_ref(ref):
+    """Extrait les sources des modèles {{Source|...}} dans une référence."""
+    source_pattern = re.compile(r'\{\{Source\|(.*?)\}\}')
+    sources = source_pattern.findall(ref)
+    return sources
+
+def parse_ref(ref):
+    """Parse une référence pour extraire les sources et les métadonnées."""
+    url = None
+    meta = {}
+    sources = extract_sources_from_ref(ref)
+    if ref.strip().startswith("http"):
+        parts = ref.split()
+        url = parts[0]
+        meta["consulté"] = " ".join(parts[1:]) if len(parts) > 1 else ""
+    return url, meta, sources
+
+def extract_infobox_events(text):
+    """Extrait les événements d'une balise {{Infobox actualité|...}}."""
+    infobox_pattern = re.compile(r'\{\{\s*Infobox\s+actualité\s*\|\s*(.*?)\}\}', re.DOTALL)
+    matches = infobox_pattern.findall(text)
+    events = []
+
+    for match in matches:
+        event = {}
+        lines = re.split(r'\n|;', match)
+        for line in lines:
+            line = line.strip()
+            if '=' in line:
+                key, value = line.split('=', 1)
+                key = key.strip()
+                value = value.strip()
+                event[key] = value
+        if event:
+            events.append(event)
+
+    return events
+
+def add_internal_links_to_note(note_elem, note_text, people_data, places_data, events_data, media_handles, source_handles, note_handle, notes_data):
+    """
+    Ajoute les balises <style name="link"> pour les références internes dans le texte de la note.
+    Met à jour les backréférences dans notes_data.
+    """
+    text_with_links = note_text
+    styles_added = []
+
+    # Trouve la note dans notes_data
+    note = next(n for n in notes_data if n['handle'] == note_handle)
+
+    # Lier les noms de personnes
+    for architect, person in people_data.items():
+        if architect in note_text:
+            start = note_text.find(architect)
+            end = start + len(architect)
+            style = ET.SubElement(note_elem, 'style', name="link", value=f"gramps://Person/handle/{person['handle'][1:]}")
+            ET.SubElement(style, 'range', start=str(start), end=str(end))
+            styles_added.append((start, end, architect))
+            note['object_handles']['people'].add(person['handle'])
+
+    # Lier les noms de lieux
+    for place_key, place in places_data.items():
+        if place['title'] in note_text:
+            start = note_text.find(place['title'])
+            end = start + len(place['title'])
+            style = ET.SubElement(note_elem, 'style', name="link", value=f"gramps://Place/handle/{place['handle'][1:]}")
+            ET.SubElement(style, 'range', start=str(start), end=str(end))
+            styles_added.append((start, end, place['title']))
+            note['object_handles']['places'].add(place['handle'])
+
+    # Lier les événements
+    for event in events_data:
+        if event['description'] in note_text:
+            start = note_text.find(event['description'])
+            end = start + len(event['description'])
+            style = ET.SubElement(note_elem, 'style', name="link", value=f"gramps://Event/handle/{event['handle'][1:]}")
+            ET.SubElement(style, 'range', start=str(start), end=str(end))
+            styles_added.append((start, end, event['description']))
+            note['object_handles']['events'].add(event['handle'])
+
+    # Lier les médias
+    for media in media_handles.values():
+        if media['file_name'] in note_text:
+            start = note_text.find(media['file_name'])
+            end = start + len(media['file_name'])
+            style = ET.SubElement(note_elem, 'style', name="link", value=f"gramps://Media/handle/{media['handle'][1:]}")
+            ET.SubElement(style, 'range', start=str(start), end=str(end))
+            styles_added.append((start, end, media['file_name']))
+            note['object_handles']['media'].add(media['handle'])
+
+    # Lier les sources
+    for source in source_handles.values():
+        if source['title'] in note_text:
+            start = note_text.find(source['title'])
+            end = start + len(source['title'])
+            style = ET.SubElement(note_elem, 'style', name="link", value=f"gramps://Source/handle/{source['handle'][1:]}")
+            ET.SubElement(style, 'range', start=str(start), end=str(end))
+            styles_added.append((start, end, source['title']))
+            note['object_handles']['sources'].add(source['handle'])
+
+    return text_with_links, styles_added
+
 def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
     """Convertit un fichier CSV en format Gramps XML."""
     print(f"Début de la conversion. Sortie vers : {output_xml_file_path}")
@@ -168,6 +279,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         if not title:
             title = "Lieu sans nom"
 
+        # Extraction des notes depuis la description
+        note_refs = extract_note_refs(row.get('Description', ''))
+
         # Extraction des architectes
         architects = extract_architects(row.get('Description', ''))
         for architect in architects:
@@ -175,10 +289,13 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                 people_data[architect] = {
                     'handle': f"_{person_id}",
                     'surname': architect.split()[-1] if architect.split() else 'Inconnu',
-                    'firstname': ' '.join(architect.split()[:-1]) if len(architect.split()) > 1 else 'Inconnu'
+                    'firstname': ' '.join(architect.split()[:-1]) if len(architect.split()) > 1 else 'Inconnu',
+                    'note_handles': set(note_refs),
                 }
                 person_handles[architect] = f"_{person_id}"
                 person_id += 1
+            else:
+                people_data[architect]['note_handles'].update(note_refs)
 
         # Extraction des références
         refs = extract_refs(row.get('Description', ''))
@@ -188,7 +305,8 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                 source_handles[url] = {
                     'handle': f"_{source_id}",
                     'title': url,
-                    'pubinfo': meta.get("consulté", "")
+                    'pubinfo': meta.get("consulté", ""),
+                    'note_handles': set(note_refs),
                 }
                 source_id += 1
 
@@ -197,7 +315,8 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                     source_handles[source_model] = {
                         'handle': f"_{source_id}",
                         'title': source_model,
-                        'pubinfo': ""
+                        'pubinfo': "",
+                        'note_handles': set(note_refs),
                     }
                     source_id += 1
 
@@ -210,7 +329,8 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                 'title': place_key,
                 'lat': lat,
                 'lon': lon,
-                'architects': architects
+                'architects': architects,
+                'note_handles': set(note_refs),
             }
             place_handles[place_key] = f"_{place_id}"
             place_id += 1
@@ -224,7 +344,8 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                 'date': event_info.get('date', ''),
                 'description': f"Événement lié à {title}",
                 'place_handle': place_handles.get(f"{title} (coordonnées 1)"),
-                'architects': architects if isinstance(architects, set) else set()
+                'architects': architects if isinstance(architects, set) else set(),
+                'note_handles': set(note_refs),
             })
             # Stocke l'événement pour chaque architecte
             for architect in architects:
@@ -241,9 +362,12 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                     'handle': f"_{media_id}",
                     'file_name': file_name,
                     'mime': get_mime_type(file_name),
-                    'description': file_desc
+                    'description': file_desc,
+                    'note_handles': set(note_refs),
                 }
                 media_id += 1
+            else:
+                media_handles[file_name]['note_handles'].update(note_refs)
 
         # Création des notes
         if 'Description' in row and row['Description']:
@@ -252,7 +376,14 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                 'handle': note_handle,
                 'text': row['Description'],
                 'media_handles': [media_handles[file_name]['handle'] for file_name, _ in files if file_name in media_handles],
-                'source_handles': []
+                'source_handles': [],
+                'object_handles': {
+                    'people': set(),
+                    'places': set(),
+                    'events': set(),
+                    'media': set(),
+                    'sources': set(),
+                },
             })
 
             for ref in refs:
@@ -263,31 +394,37 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                     if source_model in source_handles:
                         notes_data[-1]['source_handles'].append(source_handles[source_model]['handle'])
 
-            # Stocke la note dans note_handles avec son handle comme clé
             note_handles[note_handle] = note_handle
             note_id += 1
 
-    # Associe les notes aux objets (événements, lieux, personnes, médias, sources)
+    # Associe les notes aux objets et vice versa
     for note in notes_data:
-        for event in events_data:
-            if event['description'] in note['text']:
-                event['note_handle'] = note['handle']
-
-        for place_key, place in places_data.items():
-            if place['title'] in note['text']:
-                place['note_handle'] = note['handle']
-
+        note_text = note['text']
+        # Lier les personnes
         for architect, person in people_data.items():
-            if architect in note['text']:
-                person['note_handle'] = note['handle']
-
+            if architect in note_text:
+                note['object_handles']['people'].add(person['handle'])
+                person['note_handles'].add(note['handle'])
+        # Lier les lieux
+        for place_key, place in places_data.items():
+            if place['title'] in note_text:
+                note['object_handles']['places'].add(place['handle'])
+                place['note_handles'].add(note['handle'])
+        # Lier les événements
+        for event in events_data:
+            if event['description'] in note_text:
+                note['object_handles']['events'].add(event['handle'])
+                event['note_handles'].add(note['handle'])
+        # Lier les médias
         for media in media_handles.values():
-            if media['file_name'] in note['text']:
-                media['note_handle'] = note['handle']
-
+            if media['file_name'] in note_text:
+                note['object_handles']['media'].add(media['handle'])
+                media['note_handles'].add(note['handle'])
+        # Lier les sources
         for source in source_handles.values():
-            if source['title'] in note['text']:
-                source['note_handle'] = note['handle']
+            if source['title'] in note_text:
+                note['object_handles']['sources'].add(source['handle'])
+                source['note_handles'].add(note['handle'])
 
     # Création des éléments XML à partir des données collectées
     for event in events_data:
@@ -308,10 +445,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         if event['place_handle']:
             create_xml_element(event_elem, 'place', hlink=event['place_handle'])
 
-        # Ajoute une référence à la note si elle existe
-        if 'note_handle' in event and event['note_handle'] in note_handles:
-            noteref = create_xml_element(event_elem, 'noteref')
-            noteref.set('hlink', event['note_handle'])
+        # Ajoute les références aux notes
+        for note_handle in event.get('note_handles', set()):
+            create_xml_element(event_elem, 'noteref', hlink=note_handle)
 
     for architect, person in people_data.items():
         person_elem = create_xml_element(people, 'person',
@@ -329,10 +465,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                     hlink=event_handle,
                     role='Architect')
 
-        # Ajoute une référence à la note si elle existe
-        if 'note_handle' in person and person['note_handle'] in note_handles:
-            noteref = create_xml_element(person_elem, 'noteref')
-            noteref.set('hlink', person['note_handle'])
+        # Ajoute les références aux notes
+        for note_handle in person.get('note_handles', set()):
+            create_xml_element(person_elem, 'noteref', hlink=note_handle)
 
     for place_key, place in places_data.items():
         place_elem = create_xml_element(places, 'placeobj',
@@ -348,10 +483,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             coord.set('lat', f"{place['lat']:.6f}")
             coord.set('long', f"{place['lon']:.6f}")
 
-        # Ajoute une référence à la note si elle existe
-        if 'note_handle' in place and place['note_handle'] in note_handles:
-            noteref = create_xml_element(place_elem, 'noteref')
-            noteref.set('hlink', place['note_handle'])
+        # Ajoute les références aux notes
+        for note_handle in place.get('note_handles', set()):
+            create_xml_element(place_elem, 'noteref', hlink=note_handle)
 
     for media in media_handles.values():
         media_elem = create_xml_element(objects, 'object',
@@ -364,10 +498,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         file_elem.set('mime', media['mime'])
         file_elem.set('description', media['description'])
 
-        # Ajoute une référence à la note si elle existe
-        if 'note_handle' in media and media['note_handle'] in note_handles:
-            noteref = create_xml_element(media_elem, 'noteref')
-            noteref.set('hlink', media['note_handle'])
+        # Ajoute les références aux notes
+        for note_handle in media.get('note_handles', set()):
+            create_xml_element(media_elem, 'noteref', hlink=note_handle)
 
     for source in source_handles.values():
         source_elem = create_xml_element(objects, 'source',
@@ -378,10 +511,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         if source['pubinfo']:
             create_xml_element(source_elem, 'spubinfo', text=source['pubinfo'])
 
-        # Ajoute une référence à la note si elle existe
-        if 'note_handle' in source and source['note_handle'] in note_handles:
-            noteref = create_xml_element(source_elem, 'noteref')
-            noteref.set('hlink', source['note_handle'])
+        # Ajoute les références aux notes
+        for note_handle in source.get('note_handles', set()):
+            create_xml_element(source_elem, 'noteref', hlink=note_handle)
 
     for note in notes_data:
         note_elem = create_xml_element(notes, 'note',
@@ -391,7 +523,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
 
         # Ajout des liens internes
         note_text = note['text']
-        note_text, _ = add_internal_links_to_note(note_elem, note_text, people_data, places_data, source_handles)
+        note_text, _ = add_internal_links_to_note(
+            note_elem, note_text, people_data, places_data, events_data, media_handles, source_handles, note['handle'], notes_data
+        )
 
         # Traitement des références dans le texte de la note
         text_with_refs = note['text']
@@ -422,6 +556,18 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         for source_handle in note['source_handles']:
             create_xml_element(note_elem, 'sourceref', hlink=source_handle)
 
+        # Ajout des backréférences aux objets
+        for obj_handle in note['object_handles']['people']:
+            create_xml_element(note_elem, 'objref', hlink=obj_handle)
+        for obj_handle in note['object_handles']['places']:
+            create_xml_element(note_elem, 'objref', hlink=obj_handle)
+        for obj_handle in note['object_handles']['events']:
+            create_xml_element(note_elem, 'objref', hlink=obj_handle)
+        for obj_handle in note['object_handles']['media']:
+            create_xml_element(note_elem, 'objref', hlink=obj_handle)
+        for obj_handle in note['object_handles']['sources']:
+            create_xml_element(note_elem, 'objref', hlink=obj_handle)
+
     output_dir = os.path.dirname(output_xml_file_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
@@ -449,87 +595,6 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         f.write(xml_pretty)
 
     print(f"\nConversion terminée avec succès ! Le fichier a été enregistré sous : {output_xml_file_path}")
-
-def extract_refs(text):
-    """Extrait les balises <ref>...</ref> d'un texte et retourne une liste de références."""
-    ref_pattern = re.compile(r'<ref>(.*?)</ref>', re.DOTALL)
-    refs = ref_pattern.findall(text)
-    return refs
-
-def extract_sources_from_ref(ref):
-    """Extrait les sources des modèles {{Source|...}} dans une référence."""
-    source_pattern = re.compile(r'\{\{Source\|(.*?)\}\}')
-    sources = source_pattern.findall(ref)
-    return sources
-
-def parse_ref(ref):
-    """Parse une référence pour extraire les sources et les métadonnées."""
-    url = None
-    meta = {}
-    sources = extract_sources_from_ref(ref)
-    if ref.strip().startswith("http"):
-        parts = ref.split()
-        url = parts[0]
-        meta["consulté"] = " ".join(parts[1:]) if len(parts) > 1 else ""
-    return url, meta, sources
-
-def extract_infobox_events(text):
-    """Extrait les événements d'une balise {{Infobox actualité|...}}."""
-    infobox_pattern = re.compile(r'\{\{\s*Infobox\s+actualité\s*\|\s*(.*?)\}\}', re.DOTALL)
-    matches = infobox_pattern.findall(text)
-    events = []
-
-    for match in matches:
-        event = {}
-        lines = re.split(r'\n|;', match)
-        for line in lines:
-            line = line.strip()
-            if '=' in line:
-                key, value = line.split('=', 1)
-                key = key.strip()
-                value = value.strip()
-                event[key] = value
-        if event:
-            events.append(event)
-
-    return events
-
-def add_internal_links_to_note(note_elem, note_text, people_data, places_data, source_handles):
-    """
-    Ajoute les balises <style name="link"> pour les références internes dans le texte de la note.
-    """
-    text_with_links = note_text
-    styles_added = []
-
-    # Exemple : Lier les noms de personnes
-    for architect, person in people_data.items():
-        if architect in note_text:
-            start = note_text.find(architect)
-            end = start + len(architect)
-            style = ET.SubElement(note_elem, 'style', name="link", value=f"gramps://Person/handle/{person['handle'][1:]}")
-            range_elem = ET.SubElement(style, 'range', start=str(start), end=str(end))
-            styles_added.append((start, end, architect))
-
-    # Exemple : Lier les noms de lieux
-    for place_key, place in places_data.items():
-        if place['title'] in note_text:
-            start = note_text.find(place['title'])
-            end = start + len(place['title'])
-            style = ET.SubElement(note_elem, 'style', name="link", value=f"gramps://Place/handle/{place['handle'][1:]}")
-            range_elem = ET.SubElement(style, 'range', start=str(start), end=str(end))
-            styles_added.append((start, end, place['title']))
-
-    # Exemple : Lier les sources
-    for source_url, source in source_handles.items():
-        if source['title'] in note_text:
-            start = note_text.find(source['title'])
-            end = start + len(source['title'])
-            style = ET.SubElement(note_elem, 'style', name="link", value=f"gramps://Source/handle/{source['handle'][1:]}")
-            range_elem = ET.SubElement(style, 'range', start=str(start), end=str(end))
-            styles_added.append((start, end, source['title']))
-
-    return text_with_links, styles_added
-
 
 def main():
     args = parse_arguments()
