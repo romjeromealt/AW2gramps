@@ -519,7 +519,8 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         note_elem = create_xml_element(notes, 'note',
             handle=note['handle'],
             change=str(int(datetime.now().timestamp())),
-            type='Html code')
+            type='Html code',
+            format='1')
 
         # Ajout des liens internes
         note_text = note['text']
