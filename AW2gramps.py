@@ -2,15 +2,17 @@
 # Gramps - a GTK+/GNOME based genealogy program
 # Copyright (C) 2016      Paul Culley (some code by Nick Hall)
 
+# -*- coding: utf-8 -*-
+
 import csv
 import re
 import argparse
+import html
 from xml.etree import ElementTree as ET
 from datetime import datetime
 import os
 import mimetypes
 import sys
-import html
 from xml.dom import minidom
 
 def nettoyer_texte(texte):
@@ -22,23 +24,35 @@ def nettoyer_texte(texte):
 def nettoyer_html(texte):
     """
     Nettoie le texte HTML pour le convertir en texte compatible avec Gramps.
+    Préserve les balises spécifiques à Gramps (ref, noteref, sourceref, objref, etc.)
     """
-    # Convertit les entités HTML en caractères normaux
-    texte = html.unescape(texte)
+    # Protège les balises spécifiques à Gramps
+    protected_tags = [
+        ('<ref>.*?</ref>', 'REF_TAG'),
+        ('<noteref[^>]*?>', 'NOTEREF_TAG'),
+        ('<sourceref[^>]*?>', 'SOURCEREF_TAG'),
+        ('<objref[^>]*?>', 'OBJREF_TAG')
+    ]
 
-    # Supprime les balises HTML tout en gardant leur contenu
-    texte = re.sub(r'<[^>]+>', '', texte)
+    # Remplace les balises spécifiques par des marqueurs temporaires
+    protected = {}
+    for pattern, marker in protected_tags:
+        for i, match in enumerate(re.finditer(pattern, texte, re.DOTALL)):
+            protected[f"{marker}_{i}"] = match.group(0)
+            texte = texte.replace(match.group(0), f"{{{marker}_{i}}}")
 
-    # Remplace les balises de style par des caractères de style Gramps
+    # Nettoyage du HTML
     texte = re.sub(r'<i>(.*?)</i>', r'/\1/', texte)  # Italique
     texte = re.sub(r'<b>(.*?)</b>', r'*\1*', texte)  # Gras
     texte = re.sub(r'<u>(.*?)</u>', r'_\1_', texte)  # Souligné
+    texte = re.sub(r'<a\s+[^>]*href=["\']([^"\']*)["\'][^>]*>(.*?)</a>', r'\2 (\1)', texte)  # Liens
+    texte = re.sub(r'<br\s*/?>', '\n', texte)  # Sauts de ligne
+    texte = re.sub(r'<[^>]+>', '', texte)  # Supprime les autres balises HTML
+    texte = html.unescape(texte)  # Convertit les entités HTML en caractères normaux
 
-    # Remplace les liens par leur texte affiché
-    texte = re.sub(r'<a\s+[^>]*href=["\']([^"\']*)["\'][^>]*>(.*?)</a>', r'\2', texte)
-
-    # Remplace les sauts de ligne
-    texte = re.sub(r'<br\s*/?>', '\n', texte)
+    # Restaure les balises spécifiques à Gramps
+    for marker, tag in protected.items():
+        texte = texte.replace(f"{{{marker}}}", tag)
 
     return texte
 
@@ -662,3 +676,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
