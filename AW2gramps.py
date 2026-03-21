@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# Gramps - a GTK+/GNOME based genealogy program
+# Copyright (C) 2016      Paul Culley (some code by Nick Hall)
 
 import csv
 import re
@@ -8,7 +10,58 @@ from datetime import datetime
 import os
 import mimetypes
 import sys
+import html
 from xml.dom import minidom
+
+def nettoyer_texte(texte):
+    """Nettoie le texte en supprimant les ; == et == autour des titres."""
+    texte = re.sub(r';\s*==\s*', '', texte)
+    texte = re.sub(r'\s*==\s*;?', '', texte)
+    return texte
+
+def nettoyer_html(texte):
+    """
+    Nettoie le texte HTML pour le convertir en texte compatible avec Gramps.
+    """
+    # Convertit les entités HTML en caractères normaux
+    texte = html.unescape(texte)
+
+    # Supprime les balises HTML tout en gardant leur contenu
+    texte = re.sub(r'<[^>]+>', '', texte)
+
+    # Remplace les balises de style par des caractères de style Gramps
+    texte = re.sub(r'<i>(.*?)</i>', r'/\1/', texte)  # Italique
+    texte = re.sub(r'<b>(.*?)</b>', r'*\1*', texte)  # Gras
+    texte = re.sub(r'<u>(.*?)</u>', r'_\1_', texte)  # Souligné
+
+    # Remplace les liens par leur texte affiché
+    texte = re.sub(r'<a\s+[^>]*href=["\']([^"\']*)["\'][^>]*>(.*?)</a>', r'\2', texte)
+
+    # Remplace les sauts de ligne
+    texte = re.sub(r'<br\s*/?>', '\n', texte)
+
+    return texte
+
+def ajouter_styles_texte(note_elem, note_text):
+    """Ajoute les balises <style> pour les titres et sections dans le texte de la note."""
+    titres_a_styliser = [
+        "Historique du nom de la place",
+        "Construction",
+        "Description",
+        "Galerie",
+        "Événements",
+        "Les maisons de l'Ecomusée",
+        "La forêt des jeux"
+    ]
+
+    for titre in titres_a_styliser:
+        if titre in note_text:
+            start = note_text.find(titre)
+            end = start + len(titre)
+            style_bold = ET.SubElement(note_elem, 'style', name="bold")
+            ET.SubElement(style_bold, 'range', start=str(start), end=str(end))
+            style_underline = ET.SubElement(note_elem, 'style', name="underline")
+            ET.SubElement(style_underline, 'range', start=str(start), end=str(end))
 
 def parse_arguments():
     """Parse les arguments de la ligne de commande."""
@@ -279,8 +332,12 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         if not title:
             title = "Lieu sans nom"
 
+        # Nettoyer le texte de la description
+        row['Description'] = nettoyer_texte(row.get('Description', ''))
+        row['Description'] = nettoyer_html(row['Description'])
+
         # Extraction des notes depuis la description
-        note_refs = extract_note_refs(row.get('Description', ''))
+        note_refs = extract_note_refs(row['Description'])
 
         # Extraction des architectes
         architects = extract_architects(row.get('Description', ''))
@@ -473,7 +530,6 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         place_elem = create_xml_element(places, 'placeobj',
             handle=place['handle'],
             change=str(int(datetime.now().timestamp())))
-
         create_xml_element(place_elem, 'ptitle', text=place['title'])
         pname = create_xml_element(place_elem, 'pname')
         pname.set('value', place['title'])
@@ -522,11 +578,14 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             type='Html code',
             format='1')
 
-        # Ajout des liens internes
-        note_text = note['text']
+        # Ajoute les balises <style> pour les titres
+        ajouter_styles_texte(note_elem, note['text'])
+
+        # Ajout des liens internes et des styles
         note_text, _ = add_internal_links_to_note(
-            note_elem, note_text, people_data, places_data, events_data, media_handles, source_handles, note['handle'], notes_data
+            note_elem, note['text'], people_data, places_data, events_data, media_handles, source_handles, note['handle'], notes_data
         )
+        note['text'] = note_text  # Met à jour le texte de la note
 
         # Traitement des références dans le texte de la note
         text_with_refs = note['text']
