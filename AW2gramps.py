@@ -138,7 +138,12 @@ def extract_architects(text):
     architects = set()
     if match:
         architects_list = [a.strip() for a in match.group(1).replace('\;', ';').split(';')]
-        architects.update(architects_list)
+        if architects_list == ['}}']:
+            architects.update({'bug AW'})
+        if not architects_list == [{''}]:
+            architects.update(architects_list)
+        else:
+            architects.update({'inconnu(e)s'})
         print(f"Architectes extraits : {architects}")
     return architects
 
@@ -589,8 +594,6 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             ET.SubElement(event_elem, 'place', hlink=event['place_handle'])
         for note_handle in event.get('note_handles', set()):
             ET.SubElement(event_elem, 'noteref', hlink=note_handle)
-        for person_handle in event.get('architects', set()):
-            ET.SubElement(event_elem, 'objref', hlink=person_handle)
 
     for architect, person in people_data.items():
         person_elem = create_xml_element(people, 'person',
