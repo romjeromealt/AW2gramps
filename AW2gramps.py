@@ -579,7 +579,8 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             date_val = format_date_for_gramps(event.get('end_date'))
 
         date_elem = ET.SubElement(event_elem, 'dateval')
-        date_elem.set('val', date_val)
+        if date_val != "":
+            date_elem.set('val', date_val)
         date_elem.set('type', 'Span')
 
         desc = f"{event.get('structure', 'Inconnu')} ({event.get('architectural_style', 'Inconnu')})"
