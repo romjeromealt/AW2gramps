@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # Gramps - a GTK+/GNOME based genealogy program
-# Copyright (C) 2016      Paul Culley (some code by Nick Hall)
 
 import csv
 import re
@@ -215,7 +214,6 @@ def process_media_links(note_text, media_handles):
 def parse_event_field(event_str):
     """
     Extrait et structure les événements à partir du champ CSV "Événement".
-    Retourne une liste de dictionnaires, un par événement.
     """
     events = []
     if not event_str:
@@ -224,7 +222,7 @@ def parse_event_field(event_str):
     event_blocks = [e.strip() for e in event_str.split('),') if e.strip()]
     for block in event_blocks:
         block = block.strip('() ')
-        parts = [p.strip() for p in block.split(',')]
+        parts = [p.strip().replace('\\', '') for p in block.split(',')]
 
         event = {
             'type': 'Inconnu',
@@ -238,60 +236,24 @@ def parse_event_field(event_str):
 
         if len(parts) >= 1:
             event['type'] = parts[0].split('(')[0].strip()
-            event['date_range'] = parts[0].split('(')[1].replace("\\", "")
+            if '(' in parts[0]:
+                date_part = parts[0].split('(')[1].strip()
+                event['date_range'] = date_part
+
         if len(parts) >= 2:
-            event['structure'] = parts[2]
+            event['structure'] = parts[1]
+        if len(parts) >= 3:
+            event['architectural_style'] = parts[2]
         if len(parts) >= 4:
-            event['architectural_style'] = parts[3]
+            event['start_date'] = parts[3]
         if len(parts) >= 5:
-            event['start_date'] = parts[4]
+            event['end_date'] = parts[4]
         if len(parts) >= 6:
-            event['end_date'] = parts[5]
-        if len(parts) >= 7:
-            event['event_num'] = parts[6]
+            event['event_num'] = parts[5]
 
         events.append(event)
 
     return events
-
-def format_date_for_gramps(date_str):
-    """
-    Convertit une date ou une plage de dates en format Gramps.
-    """
-    if not date_str:
-        return "0000-00-00"
-
-    date_str = date_str.strip()
-
-    # Gestion des cas spécifiques comme "environ 1960"
-    if date_str.startswith("environ "):
-        year = date_str.replace("environ ", "").strip()
-        if year.isdigit() and len(year) == 4:
-            return f"{year}-01-01"
-
-    # Gestion des plages de dates (ex: "1960 à 1970")
-    if 'à' in date_str:
-        parts = date_str.split('à')
-        if len(parts) == 2:
-            start = parts[0].strip()
-            end = parts[1].strip()
-            if start.isdigit() and len(start) == 4 and end.isdigit() and len(end) == 4:
-                return f"{start}-01-01/{end}-12-31"
-
-    # Gestion des dates au format "MM/YYYY" (ex: "06/1960")
-    if '/' in date_str:
-        parts = date_str.split('/')
-        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit() and len(parts[1]) == 4:
-            month = parts[0].zfill(2)
-            year = parts[1]
-            return f"{year}-{month}-01"
-
-    # Gestion des années simples (ex: "1960")
-    if date_str.isdigit() and len(date_str) == 4:
-        return f"{date_str}-01-01"
-
-    # Retourne la chaîne originale si aucun format reconnu
-    return date_str
 
 def parse_person_field(person_str):
     """
@@ -326,6 +288,45 @@ def parse_person_field(person_str):
 
     return people
 
+def extract_year(date_str):
+    """
+    Extrait une année à partir d'une chaîne de caractères.
+    """
+    if not date_str:
+        return None
+
+    # Recherche d'une année à 4 chiffres
+    year_match = re.search(r'\d{4}', date_str)
+    if year_match:
+        return year_match.group(0)
+
+    # Recherche d'une année à 2 chiffres
+    short_year_match = re.search(r'\b\d{2}\b', date_str)
+    if short_year_match:
+        short_year = short_year_match.group(0)
+        year = int(short_year)
+        if year < 50:
+            return str(year + 2000)
+        else:
+            return str(year + 1900)
+
+    return None
+
+def format_date_for_gramps(date_str):
+    """
+    Convertit une date en format Gramps en extrayant au moins l'année.
+    """
+    if not date_str:
+        return "0000-00-00"
+
+    date_str = date_str.strip()
+    year = extract_year(date_str)
+
+    if year:
+        return f"{year}-01-01"
+
+    return "0000-00-00"
+
 def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
     """Convertit un fichier CSV en format Gramps XML."""
     print(f"Début de la conversion. Sortie vers : {output_xml_file_path}")
@@ -342,15 +343,13 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
     total_rows = len(data)
     print(f"Conversion de {total_rows} entrées...")
 
-    mimetypes.init()
-
     # Création de la structure XML de base
     database = ET.Element('database', xmlns="http://gramps-project.org/xml/1.7.1/")
     header = ET.SubElement(database, 'header')
     ET.SubElement(header, 'created', date=datetime.now().strftime("%Y-%m-%d %H:%M:%S"), version="5.2.0")
     ET.SubElement(header, 'researcher').text = "Generated by script"
 
-    # Création des sections principales (corrigé : utilise ET.SubElement)
+    # Création des sections principales
     events_elem = ET.SubElement(database, 'events')
     people_elem = ET.SubElement(database, 'people')
     places_elem = ET.SubElement(database, 'places')
@@ -363,7 +362,6 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
     source_handles = {}
     place_handles = {}
     note_handles = {}
-    architect_events = {}
 
     # Compteurs pour les handles
     place_id = 100000000
@@ -504,9 +502,22 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             change=str(int(datetime.now().timestamp()))
         )
         ET.SubElement(event_elem, 'type').text = event.get('type', 'Inconnu')
+
+        # Formatage de la date
+        date_val = event.get('date', '0000-00-00')
+
+        # Si aucune date valide n'est trouvée, on essaie avec start_date
+        if date_val == "0000-00-00" and event.get('start_date'):
+            date_val = format_date_for_gramps(event.get('start_date'))
+
+        # Si aucune date valide n'est trouvée, on essaie avec end_date
+        if date_val == "0000-00-00" and event.get('end_date'):
+            date_val = format_date_for_gramps(event.get('end_date'))
+
         date_elem = ET.SubElement(event_elem, 'dateval')
-        date_elem.set('val', format_date_for_gramps(event.get('date_range', '')))
+        date_elem.set('val', date_val)
         date_elem.set('type', 'Span')
+
         desc = f"{event.get('structure', 'Inconnu')} ({event.get('architectural_style', 'Inconnu')})"
         ET.SubElement(event_elem, 'description').text = desc
         if event.get('place_handle'):
