@@ -306,16 +306,6 @@ def extract_year(date_str):
     if year_match:
         return year_match.group(0)
 
-    # Recherche d'une année à 2 chiffres
-    short_year_match = re.search(r'\b\d{2}\b', date_str)
-    if short_year_match:
-        short_year = short_year_match.group(0)
-        year = int(short_year)
-        if year < 50:
-            return str(year + 2000)
-        else:
-            return str(year + 1900)
-
     return None
 
 def format_date_for_gramps(date_str):
