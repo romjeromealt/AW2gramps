@@ -238,9 +238,8 @@ def parse_event_field(event_str):
 
         if len(parts) >= 1:
             event['type'] = parts[0].split('(')[0].strip()
+            event['date_range'] = parts[0].split('(')[1].replace("\\", "")
         if len(parts) >= 2:
-            event['date_range'] = parts[1]
-        if len(parts) >= 3:
             event['structure'] = parts[2]
         if len(parts) >= 4:
             event['architectural_style'] = parts[3]
