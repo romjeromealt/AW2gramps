@@ -501,15 +501,19 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         for architect, person in people_data.items():
             if architect in note_text:
                 note['object_handles']['people'].add(person['handle'])
+                person['note_handles'].add(note['handle'])
         for place_key, place in places_data.items():
             if place['title'] in note_text:
                 note['object_handles']['places'].add(place['handle'])
+                place['note_handles'].add(note['handle'])
         for event in events_data:
             if event['description'] in note_text:
                 note['object_handles']['events'].add(event['handle'])
+                event['note_handles'].add(note['handle'])
         for media in media_handles.values():
             if media['file_name'] in note_text:
                 note['object_handles']['media'].add(media['handle'])
+                media['note_handles'].add(note['handle'])
         for source in source_handles:
             if source in note_text:
                 note['object_handles']['sources'].add(source_handles[source])
