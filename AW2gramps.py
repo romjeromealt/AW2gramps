@@ -121,7 +121,6 @@ def extract_architects(text):
     if match:
         architects_list = [a.strip() for a in match.group(1).replace('\;', ';').split(';')]
         architects.update(architects_list)
-        print(f"Architectes extraits : {architects}")
     return architects
 
 def extract_gallery(text):
@@ -355,6 +354,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
     places_elem = ET.SubElement(database, 'places')
     objects_elem = ET.SubElement(database, 'objects')
     notes_elem = ET.SubElement(database, 'notes')
+    sources_elem = ET.SubElement(database, 'sources')
 
     # Dictionnaires pour éviter les doublons
     media_handles = {}
@@ -377,6 +377,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
     places_data = {}
     objects_data = []
     notes_data = []
+    sources_data = []
 
     for i, row in enumerate(data, 1):
         print_progress(i, total_rows)
@@ -458,6 +459,21 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             else:
                 media_handles[file_name]['note_handles'].update(note_refs)
 
+        # Extraction des sources
+        refs = extract_refs(row['Description'])
+        for ref in refs:
+            url, meta, sources = parse_ref(ref)
+            for source in sources:
+                if source not in source_handles:
+                    source_handles[source] = f"_{source_id}"
+                    sources_data.append({
+                        'handle': f"_{source_id}",
+                        'title': source,
+                        'url': url,
+                        'meta': meta,
+                    })
+                    source_id += 1
+
         # Création des notes
         if 'Description' in row and row['Description']:
             note_text, media_refs = process_media_links(row['Description'], media_handles)
@@ -467,7 +483,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                 'text': nettoyer_html(note_text),
                 'media_handles': [media_handles[file_name]['handle'] for file_name, _ in files if file_name in media_handles],
                 'media_refs': media_refs,
-                'source_handles': [],
+                'source_handles': [source_handles[source] for source in sources if source in source_handles],
                 'object_handles': {
                     'people': set(),
                     'places': set(),
@@ -494,6 +510,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         for media in media_handles.values():
             if media['file_name'] in note_text:
                 note['object_handles']['media'].add(media['handle'])
+        for source in source_handles:
+            if source in note_text:
+                note['object_handles']['sources'].add(source_handles[source])
 
     # Création des éléments XML pour les événements
     for event in events_data:
@@ -524,6 +543,8 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             ET.SubElement(event_elem, 'place', hlink=event['place_handle'])
         for note_handle in event.get('note_handles', set()):
             ET.SubElement(event_elem, 'noteref', hlink=note_handle)
+        for person_handle in event.get('architects', set()):
+            ET.SubElement(event_elem, 'objref', hlink=person_handle)
 
     # Création des éléments XML pour les personnes
     for architect, person in people_data.items():
@@ -577,6 +598,16 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
 
         for note_handle in media.get('note_handles', set()):
             ET.SubElement(media_elem, 'noteref', hlink=note_handle)
+
+    # Création des éléments XML pour les sources
+    for source in sources_data:
+        source_elem = ET.SubElement(sources_elem, 'source',
+            handle=source['handle'],
+            change=str(int(datetime.now().timestamp()))
+        )
+        ET.SubElement(source_elem, 'stitle').text = source['title']
+        if source['url']:
+            ET.SubElement(source_elem, 'surl').text = source['url']
 
     # Création des éléments XML pour les notes
     for note in notes_data:
