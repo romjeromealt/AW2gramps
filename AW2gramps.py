@@ -434,9 +434,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                 'handle': f"_{event_id}",
                 'type': event.get('type', 'Inconnu'),
                 'date': format_date_for_gramps(event.get('date_range', '')),
-                'description': f"{event.get('type', 'Inconnu')} ({event.get('structure', 'Inconnu')}, {event.get('architectural_style', 'Inconnu')})",
-                'place_handle': None,
-                'architects': set(),
+                'description': f"Événement lié à {title}",
+                'place_handle': place_handles.get(f"{title} (coordonnées 1)"),
+                'architects': architects if isinstance(architects, set) else set(),
                 'note_handles': set(note_refs),
                 'event_num': event.get('event_num'),
             })
@@ -463,7 +463,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             events_data.append({
                 'handle': f"_{event_id}",
                 'type': event_info.get('type', 'Construction'),
-                'date': event_info.get('date', ''),
+                'date': format_date_for_gramps(event.get('date_range', '')),
                 'description': f"Événement lié à {title}",
                 'place_handle': place_handles.get(f"{title} (coordonnées 1)"),
                 'architects': architects if isinstance(architects, set) else set(),
@@ -578,7 +578,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             date_elem.set('val', date_val)
         #date_elem.set('type', 'Span')
 
-        desc = f"{event.get('structure', 'Inconnu')} ({event.get('architectural_style', 'Inconnu')})"
+        desc = f"Événement lié à {title}"
         ET.SubElement(event_elem, 'description').text = desc
         if event.get('place_handle'):
             ET.SubElement(event_elem, 'place', hlink=event['place_handle'])
@@ -675,18 +675,6 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
         # Ajout des références aux sources
         for source_handle in note['source_handles']:
             create_xml_element(note_elem, 'sourceref', hlink=source_handle)
-
-        # Ajout des backréférences aux objets
-        for obj_handle in note['object_handles']['people']:
-            create_xml_element(note_elem, 'objref', hlink=obj_handle)
-        for obj_handle in note['object_handles']['places']:
-            create_xml_element(note_elem, 'objref', hlink=obj_handle)
-        for obj_handle in note['object_handles']['events']:
-            create_xml_element(note_elem, 'objref', hlink=obj_handle)
-        for obj_handle in note['object_handles']['media']:
-            create_xml_element(note_elem, 'objref', hlink=obj_handle)
-        for obj_handle in note['object_handles']['sources']:
-            create_xml_element(note_elem, 'objref', hlink=obj_handle)
 
         # Ajoute le texte de la note
         create_xml_element(note_elem, 'text', text=note['text'])
