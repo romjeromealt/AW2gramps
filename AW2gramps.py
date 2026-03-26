@@ -574,12 +574,10 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             date_val = format_date_for_gramps(event.get('end_date'))
 
         date_elem = ET.SubElement(event_elem, 'dateval')
-        if date_val != "":
+        if date_val != ("" or "0000-00-00"):
             date_elem.set('val', date_val)
         #date_elem.set('type', 'Span')
 
-        desc = f"Événement lié à {title}"
-        ET.SubElement(event_elem, 'description').text = desc
         if event.get('place_handle'):
             ET.SubElement(event_elem, 'place', hlink=event['place_handle'])
         for note_handle in event.get('note_handles', set()):
