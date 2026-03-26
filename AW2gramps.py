@@ -434,9 +434,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                 'handle': f"_{event_id}",
                 'type': event.get('type', 'Inconnu'),
                 'date': format_date_for_gramps(event.get('date_range', '')),
-                'description': f"Événement lié à {title}",
-                'place_handle': place_handles.get(f"{title} (coordonnées 1)"),
-                'architects': architects if isinstance(architects, set) else set(),
+                'description': None,
+                'place_handle': None,
+                'architects': set(),
                 'note_handles': set(note_refs),
                 'event_num': event.get('event_num'),
             })
@@ -463,7 +463,7 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
             events_data.append({
                 'handle': f"_{event_id}",
                 'type': event_info.get('type', 'Construction'),
-                'date': format_date_for_gramps(event.get('date_range', '')),
+                'date': event_info.get('date', ''),
                 'description': f"Événement lié à {title}",
                 'place_handle': place_handles.get(f"{title} (coordonnées 1)"),
                 'architects': architects if isinstance(architects, set) else set(),
@@ -539,10 +539,9 @@ def csv_to_gramps_xml(csv_file_path, output_xml_file_path):
                 note['object_handles']['places'].add(place['handle'])
                 place['note_handles'].add(note['handle'])
         # Lier les événements
-        for event in events_data:
-            if event['description'] in note_text:
-                note['object_handles']['events'].add(event['handle'])
-                event['note_handles'].add(note['handle'])
+        #for event in events_data:
+            #note['object_handles']['events'].add(event['handle'])
+            #event['note_handles'].add(note['handle'])
         # Lier les médias
         for media in media_handles.values():
             if media['file_name'] in note_text:
