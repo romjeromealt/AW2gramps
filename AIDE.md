@@ -127,6 +127,7 @@ pip install opencv-python numpy pandas pytesseract
 🎨 Personnalisation avancée
 
 **Modifier le prétraitement**
+
 Édite la fonction preprocess_col() dans le script pour ajouter des étapes comme :
 
 - Correction de la perspective
@@ -149,6 +150,34 @@ for i, img in enumerate(images):
 - Documentation OpenCV
 - Documentation Tesseract
 - Tutoriel OCR avec OpenCV
+
+🎯 Exemples d'utilisation
+
+**Traiter une image**
+```bash
+python script_ocr.py --input A.JPG --output resultats/
+```
+**Traiter avec un profil personnalisé**
+```bash
+python script_ocr.py --input registre.jpg --profile ancien_manuscrit --output resultats/
+```
+**Traiter un dossier entier avec prévisualisation**
+```bash
+python script_ocr.py --input images/ --output resultats/ --preview
+```
+**Détecter automatiquement les colonnes**
+```bash
+python script_ocr.py --input tableau.jpg --auto-columns --output resultats/
+```
+
+
+
+
+
+
+
+
+
 
 
 
