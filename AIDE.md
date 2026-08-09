@@ -22,9 +22,9 @@ Il utilise :
 Si tu utilises Windows, ajoute cette ligne **au début du script** (après les imports) :
 ```python
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+```
 
 🚀 Installation
-
 **Installer les dépendances Python :**
 ```python
 pip install opencv-python numpy pandas pytesseract
