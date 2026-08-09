@@ -175,8 +175,8 @@ python script_ocr.py --input tableau.jpg --auto-columns --output resultats/
 ### Description
 L'algorithme **Phonex** permet de **comparer et corriger les noms** en se basant sur leur **prononciation** plutôt que leur orthographe.
 Idéal pour :
-✅ **Corriger les erreurs d'OCR** (ex: `"Danguyon"` → `"Danguyon"`)
-✅ **Trouver des variantes d'un même nom** (ex: `"Ordonneau"` vs `"Ordonneau"`)
+✅ **Corriger les erreurs d'OCR** (ex: `"Dangayon"` → `"Danguyon"`)
+✅ **Trouver des variantes d'un même nom** (ex: `"Ordonneau"` vs `"Ordoneau"`)
 ✅ **Normaliser les entrées** avant traitement
 
 ---
