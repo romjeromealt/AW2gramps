@@ -170,12 +170,21 @@ python script_ocr.py --input images/ --output resultats/ --preview
 python script_ocr.py --input tableau.jpg --auto-columns --output resultats/
 ```
 
+## 🔤 **Fonctionnalité Phonex : Correction phonétique des noms**
 
+### Description
+L'algorithme **Phonex** permet de **comparer et corriger les noms** en se basant sur leur **prononciation** plutôt que leur orthographe.
+Idéal pour :
+✅ **Corriger les erreurs d'OCR** (ex: `"Danguyon"` → `"Danguyon"`)
+✅ **Trouver des variantes d'un même nom** (ex: `"Ordonneau"` vs `"Ordonneau"`)
+✅ **Normaliser les entrées** avant traitement
 
-
-
-
-
+---
+### Utilisation
+1. **Calculer le code Phonex** d'un nom :
+   ```python
+   code = phonex_fr("Danguyon")  # Retourne "T120"
+   ```
 
 
 
