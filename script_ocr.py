@@ -6,9 +6,11 @@ import pandas as pd
 import os
 import json
 import glob
+import shutil
 import re
 import string
 import unicodedata
+from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
 
@@ -17,8 +19,9 @@ from datetime import datetime
 # =============================================================================
 
 IGNORE = "HW~!@#$%^&*()_+=-`[]\|;:'/?.,<>\" \t\f\v"
-TABLE = str.maketrans('ABCDEFGIJKLMNOPQRSTUVXYZ',
-                      '012301202245501262301202')
+source = string.ascii_uppercase  # 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+destination = '01230120224550126230120200'
+TABLE = str.maketrans(source, destination)
 
 def phonex_fr(strval):
     """Retourne la valeur Phonex pour une chaîne (français)."""
@@ -204,12 +207,12 @@ DEFAULT_PROFILES = {
         "whitelist_text": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ.,-",
         "whitelist_digits": "0123456789",
         "columns": [
-            {"type": "text"},
-            {"type": "digits"},
-            {"type": "text"},
-            {"type": "digits"},
-            {"type": "text"},
-            {"type": "digits"}
+            {"type": "text", "is_name": True},
+            {"type": "digits", "is_name": False},
+            {"type": "text", "is_name": True},
+            {"type": "digits", "is_name": False},
+            {"type": "text", "is_name": True},
+            {"type": "digits", "is_name": False},
         ]
     },
     "ancien_manuscrit": {
@@ -250,7 +253,7 @@ def detect_columns(img):
     vertical_lines = []
     for line in lines:
         x1, y1, x2, y2 = line[0]
-        if abs(x1 - x2) < 10:  # Ligne verticale
+        if abs(x1 - x2) < 10 and abs(y1 - y2) > 50:  # Ligne verticale et suffisamment longue
             vertical_lines.append((x1 + x2) // 2)
     vertical_lines = sorted(list(set(vertical_lines)))
     return vertical_lines
@@ -266,7 +269,8 @@ def process_image(image_path, config, output_dir):
     filename = os.path.splitext(os.path.basename(image_path))[0]
 
     # Créer un dossier de débogage pour cette image
-    debug_dir = os.path.join(output_dir, f"debug_{filename}")
+    debug_dir = Path(output_dir) / f"debug_{Path(image_path).stem}"
+    debug_dir.mkdir(exist_ok=True)
     os.makedirs(debug_dir, exist_ok=True)
 
     # Détecter ou utiliser les colonnes fixes
@@ -277,7 +281,7 @@ def process_image(image_path, config, output_dir):
             col_x_positions = [i * img_width // 6 for i in range(1, 6)]
         col_x_positions = [0] + col_x_positions + [img_width]
     else:
-        num_cols = len(config["columns"])
+        num_cols = max(1, len(config["columns"]))  # Au moins 1 colonne
         col_x_positions = [i * img_width // num_cols for i in range(num_cols + 1)]
 
     # Sauvegarder l'image originale
@@ -318,7 +322,10 @@ def process_image(image_path, config, output_dir):
         else:
             tesseract_config = f'--oem 3 --psm 6 -l {config.get("tesseract_lang", "fra+eng")} -c tessedit_char_whitelist={config.get("whitelist_text", "")}'
 
-        text = pytesseract.image_to_string(processed_col, config=tesseract_config).strip()
+        text = pytesseract.image_to_string(processed_col, config=tesseract_config)
+        if not text:
+            text = ""
+        text = text.strip()
         col_texts.append(text)
 
     # Structurer les données
@@ -332,12 +339,29 @@ def process_image(image_path, config, output_dir):
     for i in range(max_lines):
         row_data = {}
         for j, header in enumerate(headers):
-            row_data[header] = lines[j][i] if i < len(lines[j]) else ""
+            row_data[header] = ""
+            if i < len(lines[j]):
+                # Appliquer la correction phonétique aux colonnes de noms (1, 3, 5)
+                if config["columns"][j].get("is_name", False):
+                    row_data[header] = corriger_nom(lines[j][i], CORRECTIONS_PHONETIQUES)
+            else:
+                try:
+                    row_data[header] = lines[j][i]
+                except IndexError:
+                    pass
         structured_data.append(row_data)
 
     # Exporter en CSV
     csv_path = os.path.join(output_dir, f"{filename}.csv")
     pd.DataFrame(structured_data).to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    # Afficher les codes Phonex pour vérification ---
+    print("\n🔍 Codes Phonex pour les noms (pour vérification) :")
+    for row in structured_data[:5]:  # Affiche les 5 premières lignes
+        for header in headers[::2]:  # Colonnes de noms (1, 3, 5)
+            nom = row[header]
+            if nom:
+                print(f"{nom}: {phonex_fr(nom)}")
 
     # Sauvegarder la config utilisée
     with open(os.path.join(output_dir, f"{filename}_config.json"), "w") as f:
@@ -413,8 +437,6 @@ def generate_preview_html(debug_dir, config, results, html_path):
         f.write(html)
 
 # --- 6. Traitement des images ---
-import shutil
-
 if os.path.isdir(args.input):
     # Traiter un dossier d'images
     image_paths = glob.glob(os.path.join(args.input, "*.jpg")) + glob.glob(os.path.join(args.input, "*.png"))
