@@ -149,35 +149,91 @@ def compare_phonex(str1, str2):
     return phonex_fr(str1) == phonex_fr(str2)
 
 # =============================================================================
-# Dictionnaire de correction phonétique (pour corriger les erreurs OCR)
+# Dictionnaire de correction phonétique  (chargé depuis un fichier JSON)
 # =============================================================================
-# Exemple : Si Tesseract lit "Danguyon" au lieu de "Danguyon", Phonex les considérera comme identiques.
-# Tu peux ajouter des paires (erreur OCR, correction) ici :
-CORRECTIONS_PHONETIQUES = {
-    # Exemples pour les noms fréquents dans les registres
-    "Danguyon": ["Danguyon", "Danguyon", "Danguyon"],  # Ajoute les variantes OCR ici
-    "Ordonneau": ["Ordonneau", "Ordonneau", "Ordonneau"],
-    # Ajoute d'autres noms ici...
-}
+
+DEFAULT_DICT_PATH = "dictionnaire_noms.json"  # Chemin par défaut
+
+def charger_dictionnaire_noms(path=None):
+    """
+    Charge un dictionnaire de noms depuis un fichier JSON.
+    Si le fichier n'existe pas, retourne un dictionnaire vide.
+    {
+    "Danguyon": ["Danguyon", "Danguyon", "Danguyon"],
+    "Ordonneau": ["Ordonneau", "Ordonneau", "Ordonnau"],
+    "Acker": ["Acker", "Acker", "Aker", "Accker"],
+    "Albejard": ["Albejard", "Albejart", "Albejard"],
+    "Barthélemy": ["Barthélemy", "Barthelemy", "Barthélémy"],
+    "Aubert": ["Aubert", "Aubert", "Aubèrt"],
+    "Boeuf": ["Boeuf", "Boeuf", "Bœuf"],
+    "Chabert": ["Chabert", "Chabert", "Chabèrt"],
+    "Dubois": ["Dubois", "Dubois", "Du Bois", "DuBois"],
+    "Martin": ["Martin", "Martain", "Martain"],
+    "Moreau": ["Moreau", "Moreau", "Morau"],
+    "Roux": ["Roux", "Roux", "Rou"],
+    "Simon": ["Simon", "Simond", "Simond"]
+    }
+    
+    """
+    if path is None:
+        path = DEFAULT_DICT_PATH
+
+    if not os.path.exists(path):
+        print(f"⚠️ Fichier de dictionnaire introuvable : {path}")
+        print("   Un dictionnaire vide sera utilisé.")
+        return {}
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"❌ Erreur dans le fichier {path} : {e}")
+        return {}
+    except Exception as e:
+        print(f"❌ Impossible de charger {path} : {e}")
+        return {}
+
+def sauvegader_dictionnaire_noms(dictionnaire, path=None):
+    """
+    Sauvegarde un dictionnaire de noms dans un fichier JSON.
+    """
+    if path is None:
+        path = DEFAULT_DICT_PATH
+
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(dictionnaire, f, indent=4, ensure_ascii=False)
+        print(f"✅ Dictionnaire sauvegardé dans {path}")
+    except Exception as e:
+        print(f"❌ Impossible de sauvegarder {path} : {e}")
+
+# Charger le dictionnaire au démarrage
+CORRECTIONS_PHONETIQUES = charger_dictionnaire_noms()
 
 def corriger_nom(nom, dictionnaire=None):
     """Corrige un nom en utilisant Phonex et un dictionnaire de variantes."""
     if dictionnaire is None:
         dictionnaire = CORRECTIONS_PHONETIQUES
 
-    # Si le nom est déjà dans le dictionnaire, retourner la version canonique
+    if not nom:
+        return nom
+
+    nom = nom.strip().upper()  # Normaliser
+
+    # Vérifier si le nom est déjà canonique ou dans les variantes
     for canonique, variantes in dictionnaire.items():
-        if nom in variantes:
+        if nom == canonique or nom in variantes:
             return canonique
 
-    # Sinon, chercher une correspondance phonétique
+    # Chercher une correspondance phonétique
     for canonique, variantes in dictionnaire.items():
+        if compare_phonex(nom, canonique):
+            return canonique
         for variante in variantes:
             if compare_phonex(nom, variante):
                 return canonique
 
-    # Si aucune correspondance, retourner le nom original
-    return nom
+    return nom  # Retourner le nom original si aucune correspondance
 
 # --- 1. Gestion des arguments en ligne de commande ---
 parser = argparse.ArgumentParser(description="Extraction OCR de tableaux avec configuration avancée")
@@ -186,6 +242,10 @@ parser.add_argument("--input", type=str, default="A.JPG", help="Image ou dossier
 parser.add_argument("--output", type=str, default="output", help="Dossier de sortie (défaut: output/)")
 parser.add_argument("--preview", action="store_true", help="Générer une page HTML de prévisualisation")
 parser.add_argument("--auto-columns", action="store_true", help="Détecter automatiquement les colonnes")
+parser.add_argument("--dictionnaire", type=str, default=None, help="Chemin vers le fichier JSON du dictionnaire de noms (défaut: dictionnaire_noms.json)"
+)
+parser.add_argument("--update-dict", action="store_true", help="Mode édition interactive du dictionnaire de noms"
+)
 args = parser.parse_args()
 
 # --- 2. Charger la configuration ---
@@ -205,7 +265,7 @@ DEFAULT_PROFILES = {
         "iterations_dilate": 2,
         "tesseract_lang": "fra+eng",
         "whitelist_text": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ.,-",
-        "whitelist_digits": "0123456789",
+        "whitelist_digits": "0123456789IOO°¶-",
         "columns": [
             {"type": "text", "is_name": True},
             {"type": "digits", "is_name": False},
@@ -247,13 +307,13 @@ config = load_profile(args.profile)
 def detect_columns(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 50, 150, apertureSize=3)
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=100, minLineLength=100, maxLineGap=10)
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=100, minLineLength=50, maxLineGap=10)
     if lines is None:
         return []
     vertical_lines = []
     for line in lines:
         x1, y1, x2, y2 = line[0]
-        if abs(x1 - x2) < 10 and abs(y1 - y2) > 50:  # Ligne verticale et suffisamment longue
+        if abs(x1 - x2) < 20:  # Ligne verticale (tolérance de 20 pixels)
             vertical_lines.append((x1 + x2) // 2)
     vertical_lines = sorted(list(set(vertical_lines)))
     return vertical_lines
@@ -270,8 +330,7 @@ def process_image(image_path, config, output_dir):
 
     # Créer un dossier de débogage pour cette image
     debug_dir = Path(output_dir) / f"debug_{Path(image_path).stem}"
-    debug_dir.mkdir(exist_ok=True)
-    os.makedirs(debug_dir, exist_ok=True)
+    debug_dir.mkdir(parents=True, exist_ok=True)
 
     # Détecter ou utiliser les colonnes fixes
     if args.auto_columns:
@@ -291,9 +350,27 @@ def process_image(image_path, config, output_dir):
     def preprocess_col(img, col_type):
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         if col_type == "digits":
-            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-            processed = cv2.dilate(thresh, kernel, iterations=config.get("iterations_dilate", 2))
+            # 1. Réduire le bruit avec un filtre médian (meilleur pour les manuscrits)
+            blurred = cv2.medianBlur(gray, 3)
+
+            # 2. Binarisation adaptative avec des paramètres ajustés
+            thresh = cv2.adaptiveThreshold(
+                blurred, 255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY_INV, 11, 3  # blockSize=11, C=3 (plus tolérant)
+            )
+
+            # 3. Supprimer les lignes horizontales (séparateurs)
+            horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (50, 1))
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, horizontal_kernel, iterations=1)
+
+            # 4. Fermeture pour combler les trous dans les chiffres (ex: 0, 8, 6)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+            closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+            # 5. Dilatation légère pour connecter les chiffres fragmentés
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 1))  # ✅ Plus large horizontalement
+            processed = cv2.dilate(closed, kernel, iterations=1)
         else:
             blurred = cv2.bilateralFilter(gray, d=config.get("d", 9), sigmaColor=config.get("sigmaColor", 75), sigmaSpace=75)
             thresh = cv2.adaptiveThreshold(
@@ -318,14 +395,11 @@ def process_image(image_path, config, output_dir):
 
         # Config Tesseract
         if col_type == "digits":
-            tesseract_config = f'--oem 3 --psm 6 -l {config.get("tesseract_lang", "fra")} -c tessedit_char_whitelist={config.get("whitelist_digits", "0123456789")}'
+            tesseract_config = f'--oem 1 --psm 11 -l {config.get("tesseract_lang", "fra")} -c tessedit_char_whitelist={config.get("whitelist_digits", "0123456789IOO°¶-")}'
         else:
             tesseract_config = f'--oem 3 --psm 6 -l {config.get("tesseract_lang", "fra+eng")} -c tessedit_char_whitelist={config.get("whitelist_text", "")}'
 
-        text = pytesseract.image_to_string(processed_col, config=tesseract_config)
-        if not text:
-            text = ""
-        text = text.strip()
+        text = pytesseract.image_to_string(processed_col, config=tesseract_config).strip()
         col_texts.append(text)
 
     # Structurer les données
@@ -339,17 +413,18 @@ def process_image(image_path, config, output_dir):
     for i in range(max_lines):
         row_data = {}
         for j, header in enumerate(headers):
-            row_data[header] = ""
             if i < len(lines[j]):
-                # Appliquer la correction phonétique aux colonnes de noms (1, 3, 5)
-                if config["columns"][j].get("is_name", False):
+                # Vérifier si c'est une colonne de nom ET si on a une config pour cette colonne
+                is_name_col = False
+                if j < len(config["columns"]):
+                    is_name_col = config["columns"][j].get("is_name", True)
+                if is_name_col:
                     row_data[header] = corriger_nom(lines[j][i], CORRECTIONS_PHONETIQUES)
+                else:
+                    row_data[header] = lines[j][i]  # Texte brut pour les non-noms
             else:
-                try:
-                    row_data[header] = lines[j][i]
-                except IndexError:
-                    pass
-        structured_data.append(row_data)
+                row_data[header] = ""  # Cellule vide
+    structured_data.append(row_data)
 
     # Exporter en CSV
     csv_path = os.path.join(output_dir, f"{filename}.csv")
@@ -412,7 +487,7 @@ def generate_preview_html(debug_dir, config, results, html_path):
             <thead><tr>
     """
 
-    for header in results[0].keys() if results else []:
+    for header in (results[0].keys() if results else []):
         html += f"<th>{header}</th>"
     html += "</tr></thead><tbody>"
 
@@ -450,3 +525,50 @@ print("\n✅ Traitement terminé !")
 print(f"📁 Résultats sauvegardés dans: {args.output}")
 if args.preview:
     print("🌐 Ouvre les fichiers *_preview.html pour voir les résultats.")
+
+# =============================================================================
+# COMMANDE POUR METTRE À JOUR LE DICTIONNAIRE
+# =============================================================================
+if args.update_dict:
+    print("\n📝 Mode édition du dictionnaire de noms")
+    print("   Appuie sur Ctrl+C pour quitter.")
+
+    # Charger le dictionnaire actuel
+    current_dict = charger_dictionnaire_noms(args.dictionnaire)
+
+    while True:
+        print("\nOptions:")
+        print("1. Ajouter un nom")
+        print("2. Supprimer un nom")
+        print("3. Afficher le dictionnaire")
+        print("4. Quitter")
+        choice = input("Choix (1-4): ").strip()
+
+        if choice == "1":
+            canonique = input("Nom canonique (ex: Danguyon): ").strip()
+            if not canonique:
+                print("❌ Nom vide ignoré.")
+                continue
+            variantes = input("Variantes (séparées par des virgules, ex: Danguyon,Danguyon): ").strip()
+            variantes = [v.strip() for v in variantes.split(",") if v.strip()]
+            variantes = list(set(variantes + [canonique]))  # Inclure le canonique
+            current_dict[canonique] = variantes
+            sauvegader_dictionnaire_noms(current_dict, args.dictionnaire)
+
+        elif choice == "2":
+            nom = input("Nom à supprimer: ").strip()
+            if nom in current_dict:
+                del current_dict[nom]
+                sauvegader_dictionnaire_noms(current_dict, args.dictionnaire)
+            else:
+                print(f"❌ '{nom}' non trouvé dans le dictionnaire.")
+
+        elif choice == "3":
+            print("\nDictionnaire actuel:")
+            for canonique, variantes in current_dict.items():
+                print(f"  {canonique}: {variantes}")
+
+        elif choice == "4":
+            break
+        else:
+            print("❌ Choix invalide.")
