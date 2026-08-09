@@ -6,7 +6,175 @@ import pandas as pd
 import os
 import json
 import glob
+import re
+import string
+import unicodedata
+from collections import defaultdict
 from datetime import datetime
+
+# =============================================================================
+# ALGORITHME PHONEX (pour la comparaison phonétique des noms)
+# =============================================================================
+
+IGNORE = "HW~!@#$%^&*()_+=-`[]\|;:'/?.,<>\" \t\f\v"
+TABLE = str.maketrans('ABCDEFGIJKLMNOPQRSTUVXYZ',
+                      '012301202245501262301202')
+
+def phonex_fr(strval):
+    """Retourne la valeur Phonex pour une chaîne (français)."""
+    if strval is None:
+        return "Z000"
+
+    # 1. Remplacer les y par des i et normaliser les accents
+    r = strval.upper().strip()
+    r = r.replace('Y', 'I')
+    r = r.replace(u'É', 'Y').replace(u'È', 'Y').replace(u'Ê', 'Y')
+
+    # Normalisation Unicode
+    r = unicodedata.normalize('NFKD', r).encode('ASCII', 'ignore').decode('ASCII')
+
+    if not r:
+        return "Z000"
+
+    # 2. Supprimer les h non précédés de C, S ou P
+    r = re.sub(r'([^P|C|S])H', r'\1', r)
+
+    # 3. Remplacer PH par F
+    r = r.replace('PH', 'F')
+
+    # 4. Remplacer les groupes de lettres
+    r = re.sub(r'G(AI?[N|M])', r'K\1', r)
+
+    # 5. Remplacer les occurrences suivies de a, e, i, o, u
+    r = re.sub(r'[A|E]I[N|M]([A|E|I|O|U])', r'YN\1', r)
+
+    # 6. Remplacer les groupes de 3 lettres (sons 'o', 'oua', 'ein')
+    r = r.replace('EAU', 'O')
+    r = r.replace('OUA', '2')
+    r = r.replace('EIN', '4')
+    r = r.replace('AIN', '4')
+    r = r.replace('EIM', '4')
+    r = r.replace('AIM', '4')
+
+    # 7. Remplacer le son É
+    r = r.replace('AI', 'Y')
+    r = r.replace('EI', 'Y')
+    r = r.replace('ER', 'YR')
+    r = r.replace('ESS', 'YS')
+    r = r.replace('ET', 'YT')
+    r = r.replace('EZ', 'YZ')
+
+    # 8. Remplacer les groupes AN/ON/AM/EN/EM/IN (sauf suivis de a,e,i,o,u ou 1-4)
+    r = re.sub(r'AN([^A|E|I|O|U|1|2|3|4])', r'1\1', r)
+    r = re.sub(r'ON([^A|E|I|O|U|1|2|3|4])', r'1\1', r)
+    r = re.sub(r'AM([^A|E|I|O|U|1|2|3|4])', r'1\1', r)
+    r = re.sub(r'EN([^A|E|I|O|U|1|2|3|4])', r'1\1', r)
+    r = re.sub(r'EM([^A|E|I|O|U|1|2|3|4])', r'1\1', r)
+    r = re.sub(r'IN([^A|E|I|O|U|1|2|3|4])', r'4\1', r)
+
+    # 9. Remplacer les S entre voyelles par Z
+    r = re.sub(r'([A|E|I|O|U|Y|1|2|3|4])S([A|E|I|O|U|Y|1|2|3|4])', r'\1Z\2', r)
+
+    # 10. Remplacer les groupes de 2 lettres
+    r = r.replace('OE', 'E')
+    r = r.replace('EU', 'E')
+    r = r.replace('AU', 'O')
+    r = r.replace('OI', '2')
+    r = r.replace('OY', '2')
+    r = r.replace('OU', '3')
+
+    # 11. Remplacer les groupes de lettres (CH, SCH, SH, etc.)
+    r = r.replace('CH', '5')
+    r = r.replace('SCH', '5')
+    r = r.replace('SH', '5')
+    r = r.replace('SS', 'S')
+    r = r.replace('SC', 'S')
+
+    # 12. Remplacer C par S s'il est suivi de E ou I
+    r = re.sub(r'C([E|I])', r'S\1', r)
+
+    # 13. Remplacer les lettres ou groupes
+    r = r.replace('C', 'K')
+    r = r.replace('Q', 'K')
+    r = r.replace('QU', 'K')
+    r = r.replace('GU', 'K')
+    r = r.replace('GA', 'KA')
+    r = r.replace('GO', 'KO')
+    r = r.replace('GY', 'KY')
+
+    # 14. Remplacer les lettres
+    r = r.replace('A', 'O')
+    r = r.replace('D', 'T')
+    r = r.replace('P', 'T')
+    r = r.replace('J', 'G')
+    r = r.replace('B', 'F')
+    r = r.replace('V', 'F')
+    r = r.replace('M', 'N')
+
+    # 15. Supprimer les lettres dupliquées
+    oldc = '#'
+    newr = ''
+    for c in r:
+        if oldc != c:
+            newr += c
+        oldc = c
+    r = newr
+
+    # 16. Supprimer les terminaisons T, X
+    r = re.sub(r'(.*)[T|X]$', r'\1', r)
+
+    # 17. Appliquer la table de traduction
+    str2 = r[0] if r else ''
+    r = r.translate(TABLE)
+
+    if not r:
+        return "Z000"
+
+    # 18. Supprimer les doublons consécutifs (sauf 0)
+    prev = r[0]
+    for character in r[1:]:
+        if character != prev and character != "0":
+            str2 += character
+        prev = character
+
+    # 19. Compléter avec des zéros
+    str2 = str2 + "0000"
+    return str2[:4]
+
+def compare_phonex(str1, str2):
+    """Compare deux chaînes phonétiquement (1 si similaires, 0 sinon)."""
+    return phonex_fr(str1) == phonex_fr(str2)
+
+# =============================================================================
+# Dictionnaire de correction phonétique (pour corriger les erreurs OCR)
+# =============================================================================
+# Exemple : Si Tesseract lit "Danguyon" au lieu de "Danguyon", Phonex les considérera comme identiques.
+# Tu peux ajouter des paires (erreur OCR, correction) ici :
+CORRECTIONS_PHONETIQUES = {
+    # Exemples pour les noms fréquents dans les registres
+    "Danguyon": ["Danguyon", "Danguyon", "Danguyon"],  # Ajoute les variantes OCR ici
+    "Ordonneau": ["Ordonneau", "Ordonneau", "Ordonneau"],
+    # Ajoute d'autres noms ici...
+}
+
+def corriger_nom(nom, dictionnaire=None):
+    """Corrige un nom en utilisant Phonex et un dictionnaire de variantes."""
+    if dictionnaire is None:
+        dictionnaire = CORRECTIONS_PHONETIQUES
+
+    # Si le nom est déjà dans le dictionnaire, retourner la version canonique
+    for canonique, variantes in dictionnaire.items():
+        if nom in variantes:
+            return canonique
+
+    # Sinon, chercher une correspondance phonétique
+    for canonique, variantes in dictionnaire.items():
+        for variante in variantes:
+            if compare_phonex(nom, variante):
+                return canonique
+
+    # Si aucune correspondance, retourner le nom original
+    return nom
 
 # --- 1. Gestion des arguments en ligne de commande ---
 parser = argparse.ArgumentParser(description="Extraction OCR de tableaux avec configuration avancée")
