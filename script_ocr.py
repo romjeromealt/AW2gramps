@@ -358,21 +358,9 @@ def process_image(image_path, config, output_dir):
     def preprocess_col(img, col_type):
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # 1. Réduction de bruit avec filtre médian
-        blurred = cv2.medianBlur(gray, 5)  # ✅ Augmenté à 5
+        inverted_image = cv2.bitwise_not(gray)
 
-        # 2. Binarisation avec seuil de Otsu (meilleur pour les manuscrits)
-        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-        # 3. Supprimer les petites taches (bruit)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        cleaned = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
-
-        # 4. Fermeture pour combler les trous dans les lettres/chiffres
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-        processed = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel, iterations=2)
-
-        return processed
+        return inverted_image
 
     # Extraire le texte de chaque colonne
     col_texts = []
