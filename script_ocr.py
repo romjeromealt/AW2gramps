@@ -285,7 +285,15 @@ DEFAULT_PROFILES = {
         "iterations_dilate": 3,
         "tesseract_lang": "fra",
         "whitelist_text": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ.,-",
-        "whitelist_digits": "0123456789IOO°¶-"
+        "whitelist_digits": "0123456789IOO°¶-",
+        "columns": [
+        {"type": "text", "is_name": True},
+        {"type": "digits", "is_name": False},
+        {"type": "text", "is_name": True},
+        {"type": "digits", "is_name": False},
+        {"type": "text", "is_name": True},
+        {"type": "digits", "is_name": False}
+    ]
     }
 }
 
