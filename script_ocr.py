@@ -285,7 +285,7 @@ DEFAULT_PROFILES = {
         "iterations_dilate": 3,
         "tesseract_lang": "fra",
         "whitelist_text": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ.,-",
-        "whitelist_digits": "0123456789"
+        "whitelist_digits": "0123456789IOO°¶-"
     }
 }
 
@@ -424,7 +424,7 @@ def process_image(image_path, config, output_dir):
                     row_data[header] = lines[j][i]  # Texte brut pour les non-noms
             else:
                 row_data[header] = ""  # Cellule vide
-    structured_data.append(row_data)
+        structured_data.append(row_data)
 
     # Exporter en CSV
     csv_path = os.path.join(output_dir, f"{filename}.csv")
