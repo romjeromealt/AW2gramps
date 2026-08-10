@@ -357,37 +357,21 @@ def process_image(image_path, config, output_dir):
     # Prétraitement
     def preprocess_col(img, col_type):
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        if col_type == "digits":
-            # 1. Réduire le bruit avec un filtre médian (meilleur pour les manuscrits)
-            blurred = cv2.medianBlur(gray, 3)
 
-            # 2. Binarisation adaptative avec des paramètres ajustés
-            thresh = cv2.adaptiveThreshold(
-                blurred, 255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY_INV, 11, 3  # blockSize=11, C=3 (plus tolérant)
-            )
+        # 1. Réduction de bruit avec filtre médian
+        blurred = cv2.medianBlur(gray, 5)  # ✅ Augmenté à 5
 
-            # 3. Supprimer les lignes horizontales (séparateurs)
-            horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (50, 1))
-            thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, horizontal_kernel, iterations=1)
+        # 2. Binarisation avec seuil de Otsu (meilleur pour les manuscrits)
+        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-            # 4. Fermeture pour combler les trous dans les chiffres (ex: 0, 8, 6)
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-            closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
+        # 3. Supprimer les petites taches (bruit)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        cleaned = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
 
-            # 5. Dilatation légère pour connecter les chiffres fragmentés
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 1))  # ✅ Plus large horizontalement
-            processed = cv2.dilate(closed, kernel, iterations=1)
-        else:
-            blurred = cv2.bilateralFilter(gray, d=config.get("d", 9), sigmaColor=config.get("sigmaColor", 75), sigmaSpace=75)
-            thresh = cv2.adaptiveThreshold(
-                blurred, 255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY_INV, config.get("blockSize", 11), config.get("C", 2)
-            )
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-            processed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=config.get("iterations_close", 1))
+        # 4. Fermeture pour combler les trous dans les lettres/chiffres
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+        processed = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel, iterations=2)
+
         return processed
 
     # Extraire le texte de chaque colonne
@@ -402,13 +386,22 @@ def process_image(image_path, config, output_dir):
         cv2.imwrite(os.path.join(debug_dir, f"col_{i+1}_processed.jpg"), processed_col)
 
         # Config Tesseract
-        if col_type == "digits":
-            tesseract_config = f'--oem 1 --psm 11 -l {config.get("tesseract_lang", "fra")} -c tessedit_char_whitelist={config.get("whitelist_digits", "0123456789IOO°¶-")}'
-        else:
-            tesseract_config = f'--oem 3 --psm 6 -l {config.get("tesseract_lang", "fra+eng")} -c tessedit_char_whitelist={config.get("whitelist_text", "")}'
+        tesseract_config = (
+            '--oem 1 '  # Moteur LSTM (obligatoire pour les manuscrits)
+            '--psm 6 '  # Bloc de texte
+            '-l fra+eng '
+            '-c                tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ'
+        )
 
         text = pytesseract.image_to_string(processed_col, config=tesseract_config).strip()
         col_texts.append(text)
+    
+    # Nettoyer les résultats aberrants
+    for i in range(len(col_texts)):
+        if i % 2 == 1:  # Colonnes de folios (2, 4, 6)
+            col_texts[i] = re.sub(r"[^0-9]", "", col_texts[i])  # Garde UNIQUEMENT les chiffres
+        else:  # Colonnes de noms
+            col_texts[i] = re.sub(r"[^A-Za-zÀ-ÿ0-9\s-]", "", col_texts[i])  # Garde lettres, chiffres, espaces, -
 
     # Structurer les données
     lines = []
