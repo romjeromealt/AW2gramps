@@ -441,6 +441,14 @@ def process_image(image_path, config, output_dir):
         # Config Tesseract
         use_raw_tesseract = False
 
+        tesseract_config = (
+                '--oem 1 '  # Moteur LSTM (obligatoire pour les manuscrits)
+                '--psm 6 '  # Bloc de texte
+                '-l fra+eng '
+                '-c  tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ'
+                '-c tessedit_unreject_ambig=true ' # Améliore la détection des caractères ambigus
+            )
+
         if use_raw_tesseract:
             if col_type == "digits":
                 text = tesseract_ocr_raw(
@@ -457,13 +465,6 @@ def process_image(image_path, config, output_dir):
                     whitelist=config.get("whitelist_text")
                 )
         else:
-            tesseract_config = (
-                '--oem 1 '  # Moteur LSTM (obligatoire pour les manuscrits)
-                '--psm 6 '  # Bloc de texte
-                '-l fra+eng '
-                '-c  tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ'
-                '-c tessedit_unreject_ambig=true ' # Améliore la détection des caractères ambigus
-            )
             text = pytesseract.image_to_string(processed_col, config=tesseract_config).strip()
         col_texts.append(text)
 
