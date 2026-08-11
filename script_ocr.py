@@ -19,7 +19,6 @@ from datetime import datetime
 
 # Vérification et import d'EasyOCR
 
-# Ajoute le répertoire utilisateur de pip à PYTHONPATH
 # Ajoute les répertoires utilisateur et système à PYTHONPATH
 user_site = os.path.expanduser("~/.local/lib/python3.6/site-packages")
 sys_site = "/usr/local/lib/python3.6/dist-packages"
