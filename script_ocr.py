@@ -38,6 +38,7 @@ except ImportError as e:
     print("   Vérifiez l'installation avec : pip3 install --user easyocr")
     print("   Essayez peut être : pip3 install --user --upgrade easyocr pillow")
     print("   ou pip3 install --user --force-reinstall python-bidi==0.21.0")
+
 # =============================================================================
 # ALGORITHME PHONEX (pour la comparaison phonétique des noms)
 # =============================================================================
@@ -244,26 +245,37 @@ def easyocr_text_extraction(image, languages=["fr"], detail=0, **kwargs):
     if not EASYOCR_AVAILABLE:
         raise RuntimeError("EasyOCR n'est pas installé ou non disponible.")
 
+    # Gestion de l'entrée (chemin ou numpy array)
     if isinstance(image, np.ndarray):
-        # EasyOCR accepte directement les tableaux numpy (format BGR ou RGB)
-        pass
+        img = image.copy()
     elif isinstance(image, str) and os.path.exists(image):
-        image = cv2.imread(image)
+        img = cv2.imread(image)
+        if img is None:
+            raise ValueError(f"Impossible de charger l'image : {image}")
     else:
-        raise ValueError("L'image doit être un chemin valide ou un tableau numpy.")
+        raise TypeError("L'image doit être un chemin (str) ou un tableau numpy.")
 
     # Initialiser le lecteur EasyOCR (cache le modèle pour éviter de le recharger)
     if not hasattr(easyocr_text_extraction, "reader"):
         easyocr_text_extraction.reader = easyocr.Reader(languages, **kwargs)
+        # easyocr_text_extraction.reader = easyocr.Reader(languages, gpu=False, quantize=False, **kwargs)
 
     # Extraire le texte
-    results = easyocr_text_extraction.reader.readtext(image, detail=detail, batch_size=4)
+    results = easyocr_text_extraction.reader.readtext(image, detail=0, batch_size=4)
 
     if detail == 1:
         return results
-    else:
-        # Concatenation simple des textes détectés
-        return " ".join([res[1] for res in results]).strip()
+
+    texts = []
+    for res in results:
+        if isinstance(res, (list, tuple)) and len(res) >= 3:  # Format attendu : (bbox, text, confiance)
+            if res[2] > 0.1:  # Seuil de confiance
+                texts.append(res[1])  # Prend le texte (2ème élément)
+        elif isinstance(res, str):  # Si EasyOCR retourne directement une chaîne
+            texts.append(res)
+        # Ignore les résultats mal formatés
+
+    return " ".join(texts).strip() if texts else ""
 
 # =============================================================================
 # Dictionnaire de correction phonétique  (chargé depuis un fichier JSON)
