@@ -317,7 +317,7 @@ def torchfreeocr_text_extraction(image, lang=["fra"], detail=0, **kwargs):
         torchfreeocr_text_extraction.reader = torchfree_ocr.Reader(lang, **kwargs)
 
     # Extraction du texte
-    results = torchfreeocrtext_extraction.reader.readtext(img, detail=0, batch_size=4)
+    results = torchfreeocr_text_extraction.reader.readtext(img, detail=0, batch_size=4)
 
     if detail == 1:
         return results
@@ -616,7 +616,7 @@ def process_image(image_path, config, output_dir):
                 text = ""
         elif ocr_engine == "torchfree" and TORCHFREE_AVAILABLE:
             try:
-                text = torchfreeocr_text_extraction(processed_col, lang=config.get("torchfree_lang", "fr"))
+                text = torchfreeocr_text_extraction(processed_col, lang=config.get("torchfree_lang", ["fr"]))
                 if col_type == "digits":
                     text = re.sub(r"[^0-9]", "", text)
                 print(f"[DEBUG TorchFree] Colonne {i+1}: {text[:50]}...")
