@@ -27,6 +27,7 @@ for path in [user_site, sys_site]:
     if os.path.exists(path) and path not in sys.path:
         sys.path.append(path)
 
+# Vérification de easyocr
 try:
     import easyocr
     EASYOCR_AVAILABLE = True
@@ -38,6 +39,18 @@ except ImportError as e:
     print("   Vérifiez l'installation avec : pip3 install --user easyocr")
     print("   Essayez peut être : pip3 install --user --upgrade easyocr pillow")
     print("   ou pip3 install --user --force-reinstall python-bidi==0.21.0")
+
+# Vérification de torchfree-ocr
+try:
+    import torchfree_ocr
+    TORCHFREE_AVAILABLE = True
+    print("✅ TorchFree OCR disponible (version {})".format(torchfree_ocr.__version__))
+except ImportError as e:
+    torchfreeocr = None
+    TORCHFREE_AVAILABLE = False
+    print("❌ TorchFree OCR non trouvé. Erreur :", e)
+    print("   Vérifiez l'installation avec : pip3 install --user torchfree-ocr")
+    print("   Si erreur de compilation : pip3 install --user --upgrade onnxruntime opencv-python")
 
 # =============================================================================
 # ALGORITHME PHONEX (pour la comparaison phonétique des noms)
@@ -277,6 +290,42 @@ def easyocr_text_extraction(image, languages=["fr"], detail=0, **kwargs):
 
     return " ".join(texts).strip() if texts else ""
 
+def torchfreeocr_text_extraction(image, lang=["fra"], detail=0, **kwargs):
+    """
+    Extrait le texte avec torchfree-ocr (100% sans PyTorch).
+    Args:
+        image: Chemin ou tableau numpy (BGR).
+        lang: Langue (ex: "fr", "en").
+    Returns:
+        Texte extrait (str).
+    """
+    if not TORCHFREE_AVAILABLE:
+        raise RuntimeError("torchfree_ocr n'est pas installé ou non disponible.")
+
+    # Gestion de l'entrée
+    if isinstance(image, np.ndarray):
+        img = image.copy()
+    elif isinstance(image, str) and os.path.exists(image):
+        img = cv2.imread(image)
+        if img is None:
+            raise ValueError(f"Impossible de charger {image}")
+    else:
+        raise TypeError("L'image doit être un chemin (str) ou un tableau numpy.")
+
+    # Initialiser le lecteur (cache le modèle pour éviter de le recharger)
+    if not hasattr(torchfreeocr_text_extraction, "reader"):
+        torchfreeocr_text_extraction.reader = torchfree_ocr.Reader(lang, **kwargs)
+
+    # Extraction du texte
+    results = torchfreeocrtext_extraction.reader.readtext(img, detail=0, batch_size=4)
+
+    if detail == 1:
+        return results
+
+    # Format des résultats : [{"text": "texte", "confidence": 0.99, ...}, ...]
+    texts = [res.get("text", "") for res in results if isinstance(res, dict)]
+    return " ".join(texts).strip()
+
 # =============================================================================
 # Dictionnaire de correction phonétique  (chargé depuis un fichier JSON)
 # =============================================================================
@@ -379,6 +428,7 @@ parser.add_argument("--raw-tesseract", action="store_true", help="Utiliser l'app
 )
 parser.add_argument("--easyocr", action="store_true", help="Forcer l'utilisation d'EasyOCR (ignore la config du profil)"
 )
+parser.add_argument("--torchfree", action="store_true", help="Utiliser torchfree-ocr (100% sans PyTorch)")
 args = parser.parse_args()
 
 # --- 2. Charger la configuration ---
@@ -448,6 +498,12 @@ DEFAULT_PROFILES = {
             {"type": "text", "is_name": True},
             {"type": "digits", "is_name": False},
         ]
+    },
+    "torchfree": {
+    "name": "TorchFree OCR (ONNX Runtime)",
+    "ocr_engine": "torchfree",
+    "torchfree_lang": "fr",
+    "columns": [...]
     }
 }
 
@@ -509,7 +565,13 @@ def process_image(image_path, config, output_dir):
     cv2.imwrite(os.path.join(debug_dir, "0_original.jpg"), original_img)
 
     use_raw_tesseract = args.raw_tesseract
-    ocr_engine = "easyocr" if args.easyocr else config.get("ocr_engine", "pytesseract")
+    # Détermine le moteur OCR (priorité : CLI > config)
+    if args.easyocr:
+        ocr_engine = "easyocr"
+    elif args.torchfree:
+        ocr_engine = "torchfree"
+    else:
+        ocr_engine = config.get("ocr_engine", "pytesseract")
 
     # Prétraitement
     def preprocess_col(img, col_type):
@@ -542,13 +604,25 @@ def process_image(image_path, config, output_dir):
             )
 
         # Utiliser le moteur OCR sélectionné
+        text = ""
         if ocr_engine == "easyocr" and EASYOCR_AVAILABLE:
-            if col_type == "digits":
+            try:
                 text = easyocr_text_extraction(processed_col, languages=config.get("easyocr_languages", ["fr"]))
-                text = re.sub(r"[^0-9]", "", text)
-            else:
-                text = easyocr_text_extraction(processed_col, languages=config.get("easyocr_languages", ["fr"]))
-            print(f"[DEBUG EasyOCR] Colonne {i+1}: {text[:50]}...")
+                if col_type == "digits":
+                    text = re.sub(r"[^0-9]", "", text)
+                print(f"[DEBUG EasyOCR] Colonne {i+1}: {text[:50]}...")
+            except Exception as e:
+                print(f"❌ Erreur EasyOCR: {e}")
+                text = ""
+        elif ocr_engine == "torchfree" and TORCHFREE_AVAILABLE:
+            try:
+                text = torchfreeocr_text_extraction(processed_col, lang=config.get("torchfree_lang", "fr"))
+                if col_type == "digits":
+                    text = re.sub(r"[^0-9]", "", text)
+                print(f"[DEBUG TorchFree] Colonne {i+1}: {text[:50]}...")
+            except Exception as e:
+                print(f"❌ Erreur TorchFree: {e}")
+                text = ""
         elif use_raw_tesseract:
             if col_type == "digits":
                 text = tesseract_ocr_raw(
