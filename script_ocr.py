@@ -12,11 +12,33 @@ import string
 import unicodedata
 import subprocess
 import tempfile
-import os
+import sys
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
 
+# Vérification et import d'EasyOCR
+
+# Ajoute le répertoire utilisateur de pip à PYTHONPATH
+# Ajoute les répertoires utilisateur et système à PYTHONPATH
+user_site = os.path.expanduser("~/.local/lib/python3.6/site-packages")
+sys_site = "/usr/local/lib/python3.6/dist-packages"
+
+for path in [user_site, sys_site]:
+    if os.path.exists(path) and path not in sys.path:
+        sys.path.append(path)
+
+try:
+    import easyocr
+    EASYOCR_AVAILABLE = True
+    print("✅ EasyOCR disponible (version {})".format(easyocr.__version__))
+except ImportError as e:
+    easyocr = None
+    EASYOCR_AVAILABLE = False
+    print("❌ EasyOCR non trouvé. Erreur :", e)
+    print("   Vérifiez l'installation avec : pip3 install --user easyocr")
+    print("   Essayez peut être : pip3 install --user --upgrade easyocr pillow")
+    print("   ou pip3 install --user --force-reinstall python-bidi==0.21.0")
 # =============================================================================
 # ALGORITHME PHONEX (pour la comparaison phonétique des noms)
 # =============================================================================
@@ -209,6 +231,41 @@ def tesseract_ocr_raw(image, lang="fra", psm=6, whitelist=None, digits_only=Fals
         if isinstance(image, np.ndarray) and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
+def easyocr_text_extraction(image, languages=["fr"], detail=0, **kwargs):
+    """
+    Extrait le texte d'une image avec EasyOCR.
+    Args:
+        image: Chemin vers l'image (str) OU tableau numpy.
+        languages: Liste des langues (ex: ["fr"], ["fr", "en"]).
+        detail: Si 1, retourne les détails (coordonnées, confiance, etc.).
+        **kwargs: Arguments supplémentaires pour EasyOCR (ex: `model_storage_directory`, `user_network_directory`).
+    Returns:
+        Texte extrait (str) ou liste de résultats détaillés si `detail=1`.
+    """
+    if not EASYOCR_AVAILABLE:
+        raise RuntimeError("EasyOCR n'est pas installé ou non disponible.")
+
+    if isinstance(image, np.ndarray):
+        # EasyOCR accepte directement les tableaux numpy (format BGR ou RGB)
+        pass
+    elif isinstance(image, str) and os.path.exists(image):
+        image = cv2.imread(image)
+    else:
+        raise ValueError("L'image doit être un chemin valide ou un tableau numpy.")
+
+    # Initialiser le lecteur EasyOCR (cache le modèle pour éviter de le recharger)
+    if not hasattr(easyocr_text_extraction, "reader"):
+        easyocr_text_extraction.reader = easyocr.Reader(languages, **kwargs)
+
+    # Extraire le texte
+    results = easyocr_text_extraction.reader.readtext(image, detail=detail, batch_size=4)
+
+    if detail == 1:
+        return results
+    else:
+        # Concatenation simple des textes détectés
+        return " ".join([res[1] for res in results]).strip()
+
 # =============================================================================
 # Dictionnaire de correction phonétique  (chargé depuis un fichier JSON)
 # =============================================================================
@@ -234,7 +291,7 @@ def charger_dictionnaire_noms(path=None):
     "Roux": ["Roux", "Roux", "Rou"],
     "Simon": ["Simon", "Simond", "Simond"]
     }
-    
+
     """
     if path is None:
         path = DEFAULT_DICT_PATH
@@ -309,6 +366,8 @@ parser.add_argument("--update-dict", action="store_true", help="Mode édition in
 )
 parser.add_argument("--raw-tesseract", action="store_true", help="Utiliser l'appel direct à `tesseract` (au lieu de pytesseract)"
 )
+parser.add_argument("--easyocr", action="store_true", help="Forcer l'utilisation d'EasyOCR (ignore la config du profil)"
+)
 args = parser.parse_args()
 
 # --- 2. Charger la configuration ---
@@ -350,13 +409,34 @@ DEFAULT_PROFILES = {
         "whitelist_text": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ.,-",
         "whitelist_digits": "0123456789IOO°¶-",
         "columns": [
-        {"type": "text", "is_name": True},
-        {"type": "digits", "is_name": False},
-        {"type": "text", "is_name": True},
-        {"type": "digits", "is_name": False},
-        {"type": "text", "is_name": True},
-        {"type": "digits", "is_name": False}
-    ]
+            {"type": "text", "is_name": True},
+            {"type": "digits", "is_name": False},
+            {"type": "text", "is_name": True},
+            {"type": "digits", "is_name": False},
+            {"type": "text", "is_name": True},
+            {"type": "digits", "is_name": False}
+         ]
+    },
+    "easyocr": {
+        "name": "easyocr",
+        "ocr_engine": "easyocr",  # Utilise EasyOCR pour ce profil
+        "easyocr_languages": ["fr", "en"],  # Exemple avec plusieurs langues
+        "sigmaColor": 75,
+        "blockSize": 11,
+        "C": 2,
+        "iterations_close": 1,
+        "iterations_dilate": 2,
+        "tesseract_lang": "fra+eng",
+        "whitelist_text": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ.,-",
+        "whitelist_digits": "0123456789IOO°¶-",
+        "columns": [
+            {"type": "text", "is_name": True},
+            {"type": "digits", "is_name": False},
+            {"type": "text", "is_name": True},
+            {"type": "digits", "is_name": False},
+            {"type": "text", "is_name": True},
+            {"type": "digits", "is_name": False},
+        ]
     }
 }
 
@@ -418,6 +498,7 @@ def process_image(image_path, config, output_dir):
     cv2.imwrite(os.path.join(debug_dir, "0_original.jpg"), original_img)
 
     use_raw_tesseract = args.raw_tesseract
+    ocr_engine = "easyocr" if args.easyocr else config.get("ocr_engine", "pytesseract")
 
     # Prétraitement
     def preprocess_col(img, col_type):
@@ -449,7 +530,15 @@ def process_image(image_path, config, output_dir):
                 '-c tessedit_unreject_ambig=true ' # Améliore la détection des caractères ambigus
             )
 
-        if use_raw_tesseract:
+        # Utiliser le moteur OCR sélectionné
+        if ocr_engine == "easyocr" and EASYOCR_AVAILABLE:
+            if col_type == "digits":
+                text = easyocr_text_extraction(processed_col, languages=config.get("easyocr_languages", ["fr"]))
+                text = re.sub(r"[^0-9]", "", text)
+            else:
+                text = easyocr_text_extraction(processed_col, languages=config.get("easyocr_languages", ["fr"]))
+            print(f"[DEBUG EasyOCR] Colonne {i+1}: {text[:50]}...")
+        elif use_raw_tesseract:
             if col_type == "digits":
                 text = tesseract_ocr_raw(
                     processed_col,
