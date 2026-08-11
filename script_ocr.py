@@ -10,6 +10,9 @@ import shutil
 import re
 import string
 import unicodedata
+import subprocess
+import tempfile
+import os
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
@@ -148,6 +151,64 @@ def compare_phonex(str1, str2):
     """Compare deux chaînes phonétiquement (1 si similaires, 0 sinon)."""
     return phonex_fr(str1) == phonex_fr(str2)
 
+def tesseract_ocr_raw(image, lang="fra", psm=6, whitelist=None, digits_only=False):
+    """
+    Appel direct à la commande `tesseract` via subprocess.
+    Args:
+        image: Chemin vers l'image (str) OU tableau numpy.
+        lang: Langue(s) (ex: "fra" ou "fra,eng").
+        psm: Mode de segmentation (6=bloc de texte, 13=ligne unique).
+        whitelist: Caractères autorisés (ex: "0123456789ABC...").
+        digits_only: Si True, force le mode "digits" (équivalent à `match digits`).
+    Returns:
+        Texte extrait (str).
+    """
+    # Sauvegarder l'image temporairement si c'est un tableau numpy
+    if isinstance(image, np.ndarray):
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp_path = tmp.name
+            cv2.imwrite(tmp_path, image)
+    else:
+        tmp_path = image
+
+    # un fichier temporaire pour la sortie
+    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tmp_out:
+        tmp_out_path = tmp_out.name
+
+    try:
+        cmd = [
+            "tesseract",
+            tmp_path,
+            "-", # "-" = sortie vers stdout
+            "-l", lang.replace(",", "+"),  # Transforme "fra,eng" en "fra+eng" (valide)
+            "--psm", str(psm),
+            "--oem", "1",  # Moteur LSTM
+        ]
+        if whitelist:
+            # Nettoyer la whitelist (enlever les caractères problématiques)
+            clean_whitelist = "".join(c for c in whitelist if c.isalnum() or c in ".,-")
+            cmd.extend(["-c", f"tessedit_char_whitelist={clean_whitelist}"])
+        if digits_only:
+            cmd.extend(["-c", "tessedit_char_whitelist=0123456789"])
+
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,  # Capture stdout
+            stderr=subprocess.PIPE,  # Capture stderr
+            universal_newlines=True  # Équivalent à text=True
+        )
+        if result.returncode != 0:
+            print(f"❌ Erreur Tesseract (code {result.returncode}) :")
+            print(f"   Commande : {' '.join(cmd)}")
+            print(f"   Erreur : {result.stderr.strip()}")
+            return ""
+
+        return result.stdout.strip()
+
+    finally:
+        if isinstance(image, np.ndarray) and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
 # =============================================================================
 # Dictionnaire de correction phonétique  (chargé depuis un fichier JSON)
 # =============================================================================
@@ -245,6 +306,8 @@ parser.add_argument("--auto-columns", action="store_true", help="Détecter autom
 parser.add_argument("--dictionnaire", type=str, default=None, help="Chemin vers le fichier JSON du dictionnaire de noms (défaut: dictionnaire_noms.json)"
 )
 parser.add_argument("--update-dict", action="store_true", help="Mode édition interactive du dictionnaire de noms"
+)
+parser.add_argument("--raw-tesseract", action="store_true", help="Utiliser l'appel direct à `tesseract` (au lieu de pytesseract)"
 )
 args = parser.parse_args()
 
@@ -354,6 +417,8 @@ def process_image(image_path, config, output_dir):
     # Sauvegarder l'image originale
     cv2.imwrite(os.path.join(debug_dir, "0_original.jpg"), original_img)
 
+    use_raw_tesseract = args.raw_tesseract
+
     # Prétraitement
     def preprocess_col(img, col_type):
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -374,16 +439,34 @@ def process_image(image_path, config, output_dir):
         cv2.imwrite(os.path.join(debug_dir, f"col_{i+1}_processed.jpg"), processed_col)
 
         # Config Tesseract
-        tesseract_config = (
-            '--oem 1 '  # Moteur LSTM (obligatoire pour les manuscrits)
-            '--psm 6 '  # Bloc de texte
-            '-l fra+eng '
-            '-c                tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ'
-        )
+        use_raw_tesseract = False
 
-        text = pytesseract.image_to_string(processed_col, config=tesseract_config).strip()
+        if use_raw_tesseract:
+            if col_type == "digits":
+                text = tesseract_ocr_raw(
+                    processed_col,
+                    lang=config["tesseract_lang"],
+                    psm=6,
+                    digits_only=True  # Équivalent à `match digits`
+                )
+            else:
+                text = tesseract_ocr_raw(
+                    processed_col,
+                    lang=config["tesseract_lang"],
+                    psm=6,
+                    whitelist=config.get("whitelist_text")
+                )
+        else:
+            tesseract_config = (
+                '--oem 1 '  # Moteur LSTM (obligatoire pour les manuscrits)
+                '--psm 6 '  # Bloc de texte
+                '-l fra+eng '
+                '-c  tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ'
+                '-c tessedit_unreject_ambig=true ' # Améliore la détection des caractères ambigus
+            )
+            text = pytesseract.image_to_string(processed_col, config=tesseract_config).strip()
         col_texts.append(text)
-    
+
     # Nettoyer les résultats aberrants
     for i in range(len(col_texts)):
         if i % 2 == 1:  # Colonnes de folios (2, 4, 6)
@@ -436,6 +519,14 @@ def process_image(image_path, config, output_dir):
         generate_preview_html(debug_dir, config, structured_data, os.path.join(output_dir, f"{filename}_preview.html"))
 
     print(f"✅ {image_path} → {csv_path} ({len(structured_data)} lignes)")
+
+    # Debug
+    text_pytesseract = pytesseract.image_to_string(processed_col, config=tesseract_config).strip()
+    text_raw = tesseract_ocr_raw(processed_col, lang='fra,eng,osd', psm=6, whitelist=config.get("whitelist_text"))
+
+    print(f"[DEBUG] pytesseract:\n{text_pytesseract}")
+    print(f"[DEBUG] raw tesseract:\n{text_raw}")
+
     return structured_data
 
 # --- 5. Générer la prévisualisation HTML ---
