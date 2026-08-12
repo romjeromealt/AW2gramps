@@ -703,7 +703,7 @@ def process_image(image_path, config, output_dir):
 
     # Debug
     text_pytesseract = pytesseract.image_to_string(processed_col, config=tesseract_config).strip()
-    text_raw = tesseract_ocr_raw(processed_col, lang='fra,eng,osd', psm=6, whitelist=config.get("whitelist_text"))
+    text_raw = tesseract_ocr_raw(processed_col, lang="eng+fra+osd", psm=6, whitelist=None)
 
     print(f"[DEBUG] pytesseract:\n{text_pytesseract}")
     print(f"[DEBUG] raw tesseract:\n{text_raw}")
