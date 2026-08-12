@@ -290,7 +290,7 @@ def easyocr_text_extraction(image, languages=["fr"], detail=0, **kwargs):
 
     return " ".join(texts).strip() if texts else ""
 
-def torchfreeocr_text_extraction(image, lang=["fra"], detail=0, **kwargs):
+def torchfreeocr_text_extraction(image, lang=["fr"], detail=0, **kwargs):
     """
     Extrait le texte avec torchfree-ocr (100% sans PyTorch).
     Args:
@@ -317,7 +317,7 @@ def torchfreeocr_text_extraction(image, lang=["fra"], detail=0, **kwargs):
         torchfreeocr_text_extraction.reader = torchfree_ocr.Reader(lang, **kwargs)
 
     # Extraction du texte
-    results = torchfreeocr_text_extraction.reader.readtext(img, detail=0, batch_size=4)
+    results = torchfreeocr_text_extraction.reader.readtext(img, detail=1, batch_size=4)
 
     if detail == 1:
         return results
