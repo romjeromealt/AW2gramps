@@ -214,7 +214,7 @@ def tesseract_ocr_raw(image, lang="fra", psm=6, whitelist=None, digits_only=Fals
         cmd = [
             "tesseract",
             tmp_path,
-            "-", # "-" = sortie vers stdout
+            "stdout",  # Sortie vers stdout (meilleure compatibilit que "-")
             "-l", lang.replace(",", "+"),  # Transforme "fra,eng" en "fra+eng" (valide)
             "--psm", str(psm),
             "--oem", "1",  # Moteur LSTM
