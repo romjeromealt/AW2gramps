@@ -214,7 +214,7 @@ def tesseract_ocr_raw(image, lang="fra", psm=6, whitelist=None, digits_only=Fals
         cmd = [
             "tesseract",
             tmp_path,
-            "stdout",  # Sortie vers stdout (meilleure compatibilit que "-")
+            "stdout", # sortie vers stdout
             "-l", lang.replace(",", "+"),  # Transforme "fra,eng" en "fra+eng" (valide)
             "--psm", str(psm),
             "--oem", "1",  # Moteur LSTM
@@ -529,7 +529,14 @@ def detect_columns(img):
         return []
     vertical_lines = []
     for line in lines:
-        x1, y1, x2, y2 = line[0]
+        # Vérifier que line[0] est un tableau de 4 éléments
+        if line is None or len(line) == 0:
+            continue
+        try:
+            x1, y1, x2, y2 = line[0]
+        except (TypeError, ValueError):
+            # Si line[0] n'est pas itérable ou n'a pas 4 éléments, ignorer
+            continue
         if abs(x1 - x2) < 20:  # Ligne verticale (tolérance de 20 pixels)
             vertical_lines.append((x1 + x2) // 2)
     vertical_lines = sorted(list(set(vertical_lines)))
