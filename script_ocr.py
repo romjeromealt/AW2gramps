@@ -487,7 +487,6 @@ DEFAULT_PROFILES = {
         "C": 2,
         "iterations_close": 1,
         "iterations_dilate": 2,
-        "tesseract_lang": "fra+eng",
         "whitelist_text": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ.,-",
         "whitelist_digits": "0123456789IOO°¶-",
         "columns": [
