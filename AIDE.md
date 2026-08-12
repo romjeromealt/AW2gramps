@@ -186,6 +186,10 @@ Idéal pour :
    code = phonex_fr("Danguyon")  # Retourne "T120"
    ```
 
+2. **Tests unitaires** (20) :
+   ```
+   python3 -m unittest test_script_ocr -v
+   ```
 
 
 
