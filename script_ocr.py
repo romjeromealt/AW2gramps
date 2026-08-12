@@ -317,7 +317,7 @@ def torchfreeocr_text_extraction(image, lang=["fr"], detail=0, **kwargs):
         torchfreeocr_text_extraction.reader = torchfree_ocr.Reader(lang, **kwargs)
 
     # Extraction du texte
-    results = torchfreeocr_text_extraction.reader.readtext(img, detail=1, batch_size=4)
+    results = torchfreeocr_text_extraction.reader.readtext(img, detail=0, batch_size=4)
 
     if detail == 1:
         return results
@@ -428,7 +428,7 @@ parser.add_argument("--raw-tesseract", action="store_true", help="Utiliser l'app
 )
 parser.add_argument("--easyocr", action="store_true", help="Forcer l'utilisation d'EasyOCR (ignore la config du profil)"
 )
-parser.add_argument("--torchfree", action="store_true", help="Utiliser torchfree-ocr (100% sans PyTorch)")
+parser.add_argument("--torchfree", action="store_true", help="Utiliser torchfree-ocr (sans PyTorch)")
 args = parser.parse_args()
 
 # --- 2. Charger la configuration ---
