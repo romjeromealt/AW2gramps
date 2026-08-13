@@ -502,7 +502,14 @@ DEFAULT_PROFILES = {
     "name": "TorchFree OCR (ONNX Runtime)",
     "ocr_engine": "torchfree",
     "torchfree_lang": "fr",
-    "columns": [...]
+    "columns": [
+            {"type": "text", "is_name": True},
+            {"type": "digits", "is_name": False},
+            {"type": "text", "is_name": True},
+            {"type": "digits", "is_name": False},
+            {"type": "text", "is_name": True},
+            {"type": "digits", "is_name": False},
+        ]
     }
 }
 
