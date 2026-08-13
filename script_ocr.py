@@ -615,8 +615,15 @@ def process_image(image_path, config, output_dir):
         # Config Tesseract
         use_raw_tesseract = False
 
+        # $ tesseract --help-oem
+        # OCR Engine modes: (see https://tesseract-ocr.github.io/tessdoc/#40-with-lstm)
+        # 0    Legacy engine only.
+        # 1    Neural nets LSTM engine only.
+        # 2    Legacy + LSTM engines.
+        # 3    Default, based on what is available.
+
         tesseract_config = (
-                '--oem 1 '  # Moteur LSTM (obligatoire pour les manuscrits)
+                '--oem 2 '  # Moteur LSTM (obligatoire pour les manuscrits)
                 '--psm 6 '  # Bloc de texte
                 '-l fra+eng '
                 '-c  tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ'
