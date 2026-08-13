@@ -322,9 +322,16 @@ def torchfreeocr_text_extraction(image, lang=["fr"], detail=0, **kwargs):
     if detail == 1:
         return results
 
-    # Format des résultats : [{"text": "texte", "confidence": 0.99, ...}, ...]
-    texts = [res.get("text", "") for res in results if isinstance(res, dict)]
-    return " ".join(texts).strip()
+    texts = []
+    for res in results:
+        if isinstance(res, (list, tuple)) and len(res) >= 3:  # Format attendu : (bbox, text, confiance)
+            if res[2] > 0.1:  # Seuil de confiance
+                texts.append(res[1])  # Prend le texte (2ème élément)
+        elif isinstance(res, str):  # Si TorchfreeEasyOCR retourne directement une chaîne
+            texts.append(res)
+        # Ignore les résultats mal formatés
+
+    return " ".join(texts).strip() if texts else ""
 
 # =============================================================================
 # Dictionnaire de correction phonétique  (chargé depuis un fichier JSON)
@@ -501,7 +508,7 @@ DEFAULT_PROFILES = {
     "torchfree": {
     "name": "TorchFree OCR (ONNX Runtime)",
     "ocr_engine": "torchfree",
-    "torchfree_lang": "fr",
+    "torchfree_lang": ["fr", "en"],
     "columns": [
             {"type": "text", "is_name": True},
             {"type": "digits", "is_name": False},
