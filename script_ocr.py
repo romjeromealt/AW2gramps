@@ -52,6 +52,44 @@ except ImportError as e:
     print("   Vérifiez l'installation avec : pip3 install --user torchfree-ocr")
     print("   Si erreur de compilation : pip3 install --user --upgrade onnxruntime opencv-python")
 
+# Dictionnaire des moteurs OCR
+OCR_ENGINES = {
+    "easyocr": {
+        "module": easyocr,
+        "reader": None,  # Sera initialisé à la première utilisation
+        "default_lang": ["fr"]
+    },
+    "torchfree": {
+        "module": torchfree_ocr,
+        "reader": None,
+        "default_lang": ["fr"]
+    }
+}
+
+# Fonction helper
+def _ocr_text_extraction(image, reader, detail=0):
+    """Traitement générique pour tous les moteurs OCR."""
+    if isinstance(image, np.ndarray):
+        img = image.copy()
+    elif isinstance(image, str) and os.path.exists(image):
+        img = cv2.imread(image)
+        if img is None:
+            raise ValueError(f"Impossible de charger {image}")
+    else:
+        raise TypeError("L'image doit être un chemin (str) ou un tableau numpy.")
+
+    results = reader.readtext(img, detail=0, batch_size=4)
+    if detail == 1:
+        return results
+
+    texts = []
+    for res in results:
+        if isinstance(res, (list, tuple)) and len(res) >= 3 and res[2] > 0.1:
+            texts.append(res[1])
+        elif isinstance(res, str):
+            texts.append(res)
+    return " ".join(texts).strip() if texts else ""
+
 # =============================================================================
 # ALGORITHME PHONEX (pour la comparaison phonétique des noms)
 # =============================================================================
@@ -244,65 +282,9 @@ def tesseract_ocr_raw(image, lang="fra", psm=6, whitelist=None, digits_only=Fals
         if isinstance(image, np.ndarray) and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
-def easyocr_text_extraction(image, languages=["fr"], detail=0, **kwargs):
-    """
-    Extrait le texte d'une image avec EasyOCR.
-    Args:
-        image: Chemin vers l'image (str) OU tableau numpy.
-        languages: Liste des langues (ex: ["fr"], ["fr", "en"]).
-        detail: Si 1, retourne les détails (coordonnées, confiance, etc.).
-        **kwargs: Arguments supplémentaires pour EasyOCR (ex: `model_storage_directory`, `user_network_directory`).
-    Returns:
-        Texte extrait (str) ou liste de résultats détaillés si `detail=1`.
-    """
-    if not EASYOCR_AVAILABLE:
-        raise RuntimeError("EasyOCR n'est pas installé ou non disponible.")
-
-    # Gestion de l'entrée (chemin ou numpy array)
-    if isinstance(image, np.ndarray):
-        img = image.copy()
-    elif isinstance(image, str) and os.path.exists(image):
-        img = cv2.imread(image)
-        if img is None:
-            raise ValueError(f"Impossible de charger l'image : {image}")
-    else:
-        raise TypeError("L'image doit être un chemin (str) ou un tableau numpy.")
-
-    # Initialiser le lecteur EasyOCR (cache le modèle pour éviter de le recharger)
-    if not hasattr(easyocr_text_extraction, "reader"):
-        easyocr_text_extraction.reader = easyocr.Reader(languages, **kwargs)
-        # easyocr_text_extraction.reader = easyocr.Reader(languages, gpu=False, quantize=False, **kwargs)
-
-    # Extraire le texte
-    results = easyocr_text_extraction.reader.readtext(image, detail=0, batch_size=4)
-
-    if detail == 1:
-        return results
-
-    texts = []
-    for res in results:
-        if isinstance(res, (list, tuple)) and len(res) >= 3:  # Format attendu : (bbox, text, confiance)
-            if res[2] > 0.1:  # Seuil de confiance
-                texts.append(res[1])  # Prend le texte (2ème élément)
-        elif isinstance(res, str):  # Si EasyOCR retourne directement une chaîne
-            texts.append(res)
-        # Ignore les résultats mal formatés
-
-    return " ".join(texts).strip() if texts else ""
-
-def torchfreeocr_text_extraction(image, lang=["fr"], detail=0, **kwargs):
-    """
-    Extrait le texte avec torchfree-ocr (100% sans PyTorch).
-    Args:
-        image: Chemin ou tableau numpy (BGR).
-        lang: Langue (ex: "fr", "en").
-    Returns:
-        Texte extrait (str).
-    """
-    if not TORCHFREE_AVAILABLE:
-        raise RuntimeError("torchfree_ocr n'est pas installé ou non disponible.")
-
-    # Gestion de l'entrée
+def _ocr_text_extraction(image, reader, detail=0):
+    """Traitement générique pour EasyOCR et TorchFree OCR."""
+    # Gestion de l'entrée (identique dans les deux fonctions)
     if isinstance(image, np.ndarray):
         img = image.copy()
     elif isinstance(image, str) and os.path.exists(image):
@@ -312,26 +294,36 @@ def torchfreeocr_text_extraction(image, lang=["fr"], detail=0, **kwargs):
     else:
         raise TypeError("L'image doit être un chemin (str) ou un tableau numpy.")
 
-    # Initialiser le lecteur (cache le modèle pour éviter de le recharger)
-    if not hasattr(torchfreeocr_text_extraction, "reader"):
-        torchfreeocr_text_extraction.reader = torchfree_ocr.Reader(lang, **kwargs)
-
     # Extraction du texte
-    results = torchfreeocr_text_extraction.reader.readtext(img, detail=0, batch_size=4)
+    results = reader.readtext(img, detail=0, batch_size=4)
 
     if detail == 1:
         return results
 
+    # Traitement des résultats (identique)
     texts = []
     for res in results:
-        if isinstance(res, (list, tuple)) and len(res) >= 3:  # Format attendu : (bbox, text, confiance)
-            if res[2] > 0.1:  # Seuil de confiance
-                texts.append(res[1])  # Prend le texte (2ème élément)
-        elif isinstance(res, str):  # Si TorchfreeEasyOCR retourne directement une chaîne
+        if isinstance(res, (list, tuple)) and len(res) >= 3 and res[2] > 0.1:
+            texts.append(res[1])
+        elif isinstance(res, str):
             texts.append(res)
-        # Ignore les résultats mal formatés
-
     return " ".join(texts).strip() if texts else ""
+
+def easyocr_text_extraction(image, languages=["fr"], detail=0, **kwargs):
+    if not EASYOCR_AVAILABLE:
+        raise RuntimeError("EasyOCR non disponible")
+    engine = OCR_ENGINES["easyocr"]
+    if engine["reader"] is None:
+        engine["reader"] = engine["module"].Reader(languages, **kwargs)
+    return _ocr_text_extraction(image, engine["reader"], detail)
+
+def torchfreeocr_text_extraction(image, lang=["fr"], detail=0, **kwargs):
+    if not TORCHFREE_AVAILABLE:
+        raise RuntimeError("TorchFree OCR non disponible")
+    engine = OCR_ENGINES["torchfree"]
+    if engine["reader"] is None:
+        engine["reader"] = engine["module"].Reader(lang, **kwargs)
+    return _ocr_text_extraction(image, engine["reader"], detail)
 
 # =============================================================================
 # Dictionnaire de correction phonétique  (chargé depuis un fichier JSON)
