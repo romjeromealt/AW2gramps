@@ -224,19 +224,8 @@ def compare_phonex(str1, str2):
     """Compare deux chaînes phonétiquement (1 si similaires, 0 sinon)."""
     return phonex_fr(str1) == phonex_fr(str2)
 
-def tesseract_ocr_raw(image, lang="fra", psm=6, whitelist=None, digits_only=False):
-    """
-    Appel direct à la commande `tesseract` via subprocess.
-    Args:
-        image: Chemin vers l'image (str) OU tableau numpy.
-        lang: Langue(s) (ex: "fra" ou "fra,eng").
-        psm: Mode de segmentation (6=bloc de texte, 13=ligne unique).
-        whitelist: Caractères autorisés (ex: "0123456789ABC...").
-        digits_only: Si True, force le mode "digits" (équivalent à `match digits`).
-    Returns:
-        Texte extrait (str).
-    """
-    # Sauvegarder l'image temporairement si c'est un tableau numpy
+def tesseract_ocr_raw(image, lang="fra", psm=6, oem=1, whitelist=None, digits_only=False):
+    """Appel direct à Tesseract avec OEM/PSM configurables."""
     if isinstance(image, np.ndarray):
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             tmp_path = tmp.name
@@ -244,43 +233,25 @@ def tesseract_ocr_raw(image, lang="fra", psm=6, whitelist=None, digits_only=Fals
     else:
         tmp_path = image
 
-    # un fichier temporaire pour la sortie
-    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tmp_out:
-        tmp_out_path = tmp_out.name
+    cmd = [
+        "tesseract",
+        tmp_path,
+        "stdout",
+        "-l", lang.replace(",", "+"),
+        "--psm", str(psm),
+        "--oem", str(oem),  # <-- Ajout de OEM
+    ]
+    if whitelist:
+        clean_whitelist = "".join(c for c in whitelist if c.isalnum() or c in ".,-")
+        cmd.extend(["-c", f"tessedit_char_whitelist={clean_whitelist}"])
+    if digits_only:
+        cmd.extend(["-c", "tessedit_char_whitelist=0123456789"])
 
-    try:
-        cmd = [
-            "tesseract",
-            tmp_path,
-            "stdout", # sortie vers stdout
-            "-l", lang.replace(",", "+"),  # Transforme "fra,eng" en "fra+eng" (valide)
-            "--psm", str(psm),
-            "--oem", "1",  # Moteur LSTM
-        ]
-        if whitelist:
-            # Nettoyer la whitelist (enlever les caractères problématiques)
-            clean_whitelist = "".join(c for c in whitelist if c.isalnum() or c in ".,-")
-            cmd.extend(["-c", f"tessedit_char_whitelist={clean_whitelist}"])
-        if digits_only:
-            cmd.extend(["-c", "tessedit_char_whitelist=0123456789"])
-
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,  # Capture stdout
-            stderr=subprocess.PIPE,  # Capture stderr
-            universal_newlines=True  # Équivalent à text=True
-        )
-        if result.returncode != 0:
-            print(f"❌ Erreur Tesseract (code {result.returncode}) :")
-            print(f"   Commande : {' '.join(cmd)}")
-            print(f"   Erreur : {result.stderr.strip()}")
-            return ""
-
-        return result.stdout.strip()
-
-    finally:
-        if isinstance(image, np.ndarray) and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode != 0:
+        print(f"❌ Erreur Tesseract (code {result.returncode}): {result.stderr.strip()}")
+        return ""
+    return result.stdout.strip()
 
 def _ocr_text_extraction(image, reader, detail=0):
     """Traitement générique pour EasyOCR et TorchFree OCR."""
@@ -412,8 +383,43 @@ def corriger_nom(nom, dictionnaire=None):
 
     return nom  # Retourner le nom original si aucune correspondance
 
+# =============================================================================
+# FONCTION POUR LISTER LES PROFILS
+# =============================================================================
+def list_profiles():
+    """Affiche la liste des profils avec leurs descriptions et paramètres."""
+    print("\n" + "=" * 70)
+    print("📋 PROFILS DISPONIBLES (utilisez --profile <nom>)".center(70))
+    print("=" * 70)
+
+    for name, profile in DEFAULT_PROFILES.items():
+        print(f"\n🔹 {name}")
+        print(f"   └─ Description: {profile['name']}")
+        print(f"   └─ Moteur OCR: {profile.get('ocr_engine', 'pytesseract')}")
+
+        # Afficher OEM/PSM si présent
+        if 'oem' in profile:
+            oem_map = {0: "Legacy only", 1: "LSTM only", 2: "Legacy+LSTM", 3: "Défaut"}
+            print(f"   └─ OEM: {profile['oem']} ({oem_map.get(profile['oem'], '?')})")
+        if 'psm' in profile:
+            psm_map = {
+                0: "OSD only", 1: "Auto+OSD", 3: "Auto (défaut)", 4: "Colonne unique",
+                5: "Bloc vertical", 6: "Bloc uniforme", 7: "Ligne unique",
+                8: "Mot unique", 11: "Texte épars", 13: "Ligne brute"
+            }
+            print(f"   └─ PSM: {profile['psm']} ({psm_map.get(profile['psm'], '?')})")
+        if 'tesseract_lang' in profile:
+            print(f"   └─ Langues: {profile['tesseract_lang']}")
+
+    print("\n" + "=" * 70)
+    print("Exemple: python script.py --profile manuscrit_ancien --input image.jpg")
+    print("=" * 70 + "\n")
+    sys.exit(0)
+
 # --- 1. Gestion des arguments en ligne de commande ---
 parser = argparse.ArgumentParser(description="Extraction OCR de tableaux avec configuration avancée")
+parser.add_argument("--list-profiles", action="store_true", help="Affiche la liste des profils disponibles et leurs paramètres"
+)
 parser.add_argument("--profile", type=str, default="default", help="Profil de configuration à utiliser (ex: ancien_manuscrit)")
 parser.add_argument("--input", type=str, default="A.JPG", help="Image ou dossier d'images à traiter (ex: images/*.jpg)")
 parser.add_argument("--output", type=str, default="output", help="Dossier de sortie (défaut: output/)")
@@ -430,6 +436,102 @@ parser.add_argument("--easyocr", action="store_true", help="Forcer l'utilisation
 parser.add_argument("--torchfree", action="store_true", help="Utiliser torchfree-ocr (sans PyTorch)")
 args = parser.parse_args()
 
+def select_profile_interactively():
+    """Affiche un menu pour choisir un profil."""
+    print("\n📋 Sélectionnez un scénario (ou tapez le nom) :")
+    for i, (name, profile) in enumerate(DEFAULT_PROFILES.items(), 1):
+        print(f"{i}. {profile['name']} ({name})")
+
+    choice = input("\nChoix (numéro ou nom) : ").strip()
+    try:
+        # Si l'utilisateur tape un numéro
+        idx = int(choice) - 1
+        return list(DEFAULT_PROFILES.keys())[idx]
+    except ValueError:
+        # Si l'utilisateur tape un nom
+        if choice in DEFAULT_PROFILES:
+            return choice
+        else:
+            print(f"⚠️ Scénario '{choice}' invalide. Utilisation de 'default'.")
+            return "default"
+
+# Profils prédéfinis
+DEFAULT_PROFILES = {
+    # --- Scénarios pour Tesseract (pytesseract) ---
+    "document_imprime": {
+        "name": "Document imprimé propre (PDF, livres)",
+        "ocr_engine": "pytesseract",
+        "oem": 1,          # LSTM only (meilleur pour la plupart des cas)
+        "psm": 6,          # Bloc de texte uniforme
+        "tesseract_lang": "fra+eng",
+        "whitelist_text": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ.,-",
+        "whitelist_digits": "0123456789",
+        "columns": [{"type": "text", "is_name": True}, {"type": "digits", "is_name": False}]
+    },
+    "manuscrit_ancien": {
+        "name": "Manuscrit ancien (bruit, fond non uniforme)",
+        "ocr_engine": "pytesseract",
+        "oem": 1,          # LSTM only
+        "psm": 11,         # Texte épars (meilleur pour les manuscrits)
+        "tesseract_lang": "fra",
+        "whitelist_text": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ.,-",
+        "whitelist_digits": "0123456789IOO°¶-",
+        "columns": [{"type": "text", "is_name": True}, {"type": "digits", "is_name": False}]
+    },
+    "tableau_colonnes": {
+        "name": "Tableau avec colonnes (noms + folios)",
+        "ocr_engine": "pytesseract",
+        "oem": 1,
+        "psm": 6,          # Bloc de texte (idéal pour les colonnes)
+        "tesseract_lang": "fra",
+        "whitelist_text": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ.,-",
+        "whitelist_digits": "0123456789",
+        "columns": [
+            {"type": "text", "is_name": True},
+            {"type": "digits", "is_name": False},
+            {"type": "text", "is_name": True},
+            {"type": "digits", "is_name": False}
+        ]
+    },
+    "numeros_purs": {
+        "name": "Extraction de numéros uniquement (folios, dates)",
+        "ocr_engine": "pytesseract",
+        "oem": 1,
+        "psm": 8,          # Mot unique
+        "tesseract_lang": "fra",
+        "whitelist_digits": "0123456789",
+        "columns": [{"type": "digits", "is_name": False}]
+    },
+    # --- Scénarios pour EasyOCR ---
+    "easyocr_manuscrit": {
+        "name": "Manuscrit avec EasyOCR",
+        "ocr_engine": "easyocr",
+        "easyocr_languages": ["fr"],
+        "columns": [{"type": "text", "is_name": True}, {"type": "digits", "is_name": False}]
+    },
+    # --- Scénarios pour TorchFree ---
+    "torchfree_tableau": {
+        "name": "Tableau avec TorchFree OCR",
+        "ocr_engine": "torchfree",
+        "torchfree_lang": ["fr"],
+        "columns": [{"type": "text", "is_name": True}, {"type": "digits", "is_name": False}]
+    }
+}
+
+# 1. Vérifier --list-profiles en premier
+if args.list_profiles:
+    list_profiles()
+
+# 2. Vérifier si on doit afficher le menu interactif
+if args.profile == "default" and len(sys.argv) == 1:
+    args.profile = select_profile_interactively()
+
+# 3. Vérifier que le profil existe
+if args.profile not in DEFAULT_PROFILES:
+    print(f"❌ Profil '{args.profile}' introuvable !")
+    print(f"   Profils disponibles: {', '.join(DEFAULT_PROFILES.keys())}")
+    sys.exit(1)
+
 # --- 2. Charger la configuration ---
 CONFIG_DIR = "profiles"
 os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -437,78 +539,64 @@ os.makedirs(args.output, exist_ok=True)
 
 # Profils prédéfinis
 DEFAULT_PROFILES = {
-    "default": {
-        "name": "Par défaut (documents imprimés)",
-        "d": 9,
-        "sigmaColor": 75,
-        "blockSize": 11,
-        "C": 2,
-        "iterations_close": 1,
-        "iterations_dilate": 2,
+    # --- Scénarios pour Tesseract (pytesseract) ---
+    "document_imprime": {
+        "name": "Document imprimé propre (PDF, livres)",
+        "ocr_engine": "pytesseract",
+        "oem": 1,          # LSTM only (meilleur pour la plupart des cas)
+        "psm": 6,          # Bloc de texte uniforme
         "tesseract_lang": "fra+eng",
         "whitelist_text": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ.,-",
-        "whitelist_digits": "0123456789IOO°¶-",
-        "columns": [
-            {"type": "text", "is_name": True},
-            {"type": "digits", "is_name": False},
-            {"type": "text", "is_name": True},
-            {"type": "digits", "is_name": False},
-            {"type": "text", "is_name": True},
-            {"type": "digits", "is_name": False},
-        ]
+        "whitelist_digits": "0123456789",
+        "columns": [{"type": "text", "is_name": True}, {"type": "digits", "is_name": False}]
     },
-    "ancien_manuscrit": {
-        "name": "Manuscrits anciens (bruit, fond non uniforme)",
-        "d": 15,
-        "sigmaColor": 100,
-        "blockSize": 19,
-        "C": 0,
-        "iterations_close": 2,
-        "iterations_dilate": 3,
+    "manuscrit_ancien": {
+        "name": "Manuscrit ancien (bruit, fond non uniforme)",
+        "ocr_engine": "pytesseract",
+        "oem": 1,          # LSTM only
+        "psm": 11,         # Texte épars (meilleur pour les manuscrits)
         "tesseract_lang": "fra",
         "whitelist_text": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ.,-",
         "whitelist_digits": "0123456789IOO°¶-",
+        "columns": [{"type": "text", "is_name": True}, {"type": "digits", "is_name": False}]
+    },
+    "tableau_colonnes": {
+        "name": "Tableau avec colonnes (noms + folios)",
+        "ocr_engine": "pytesseract",
+        "oem": 1,
+        "psm": 6,          # Bloc de texte (idéal pour les colonnes)
+        "tesseract_lang": "fra",
+        "whitelist_text": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ.,-",
+        "whitelist_digits": "0123456789",
         "columns": [
-            {"type": "text", "is_name": True},
-            {"type": "digits", "is_name": False},
             {"type": "text", "is_name": True},
             {"type": "digits", "is_name": False},
             {"type": "text", "is_name": True},
             {"type": "digits", "is_name": False}
-         ]
-    },
-    "easyocr": {
-        "name": "easyocr",
-        "ocr_engine": "easyocr",  # Utilise EasyOCR pour ce profil
-        "easyocr_languages": ["fr", "en"],  # Exemple avec plusieurs langues
-        "sigmaColor": 75,
-        "blockSize": 11,
-        "C": 2,
-        "iterations_close": 1,
-        "iterations_dilate": 2,
-        "whitelist_text": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜÑàâäçéèêëîïôöùûüñ.,-",
-        "whitelist_digits": "0123456789IOO°¶-",
-        "columns": [
-            {"type": "text", "is_name": True},
-            {"type": "digits", "is_name": False},
-            {"type": "text", "is_name": True},
-            {"type": "digits", "is_name": False},
-            {"type": "text", "is_name": True},
-            {"type": "digits", "is_name": False},
         ]
     },
-    "torchfree": {
-    "name": "TorchFree OCR (ONNX Runtime)",
-    "ocr_engine": "torchfree",
-    "torchfree_lang": ["fr", "en"],
-    "columns": [
-            {"type": "text", "is_name": True},
-            {"type": "digits", "is_name": False},
-            {"type": "text", "is_name": True},
-            {"type": "digits", "is_name": False},
-            {"type": "text", "is_name": True},
-            {"type": "digits", "is_name": False},
-        ]
+    "numeros_purs": {
+        "name": "Extraction de numéros uniquement (folios, dates)",
+        "ocr_engine": "pytesseract",
+        "oem": 1,
+        "psm": 8,          # Mot unique
+        "tesseract_lang": "fra",
+        "whitelist_digits": "0123456789",
+        "columns": [{"type": "digits", "is_name": False}]
+    },
+    # --- Scénarios pour EasyOCR ---
+    "easyocr_manuscrit": {
+        "name": "Manuscrit avec EasyOCR",
+        "ocr_engine": "easyocr",
+        "easyocr_languages": ["fr"],
+        "columns": [{"type": "text", "is_name": True}, {"type": "digits", "is_name": False}]
+    },
+    # --- Scénarios pour TorchFree ---
+    "torchfree_tableau": {
+        "name": "Tableau avec TorchFree OCR",
+        "ocr_engine": "torchfree",
+        "torchfree_lang": ["fr"],
+        "columns": [{"type": "text", "is_name": True}, {"type": "digits", "is_name": False}]
     }
 }
 
@@ -523,6 +611,16 @@ def load_profile(profile_name):
     else:
         print(f"⚠️ Profil '{profile_name}' introuvable. Utilisation du profil 'default'.")
         return DEFAULT_PROFILES["default"].copy()
+
+# Afficher les profils si demandé
+if args.list_profiles:
+    list_profiles()
+
+if args.profile not in DEFAULT_PROFILES:
+    print(f"❌ Profil '{args.profile}' introuvable !")
+    print(f"   Profils disponibles: {', '.join(DEFAULT_PROFILES.keys())}")
+    print("   Utilisez --list-profiles pour voir les détails.\n")
+    sys.exit(1)
 
 config = load_profile(args.profile)
 
@@ -643,18 +741,23 @@ def process_image(image_path, config, output_dir):
                 print(f"❌ Erreur TorchFree: {e}")
                 text = ""
         elif use_raw_tesseract:
+            # Récupérer OEM/PSM depuis le profil
+            oem = config.get("oem", 1)  # Défaut: LSTM only
+            psm = config.get("psm", 6)  # Défaut: Bloc de texte
             if col_type == "digits":
                 text = tesseract_ocr_raw(
                     processed_col,
                     lang=config["tesseract_lang"],
-                    psm=6,
-                    digits_only=True  # Équivalent à `match digits`
+                    psm=psm,
+                    oem=oem,
+                    digits_only=True
                 )
             else:
                 text = tesseract_ocr_raw(
                     processed_col,
                     lang=config["tesseract_lang"],
-                    psm=6,
+                    psm=psm,
+                    oem=oem,
                     whitelist=config.get("whitelist_text")
                 )
         else:
